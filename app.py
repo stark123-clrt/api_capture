@@ -22,9 +22,20 @@ def take_screenshot(url, width=1920, height=1080):
         
         logger.info(f"Capture pour: {url}")
         
-        # EXACTEMENT VOTRE CODE QUI FONCTIONNE
+        # EXACTEMENT VOTRE CODE QUI FONCTIONNE - version allégée pour Render
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process'
+                ]
+            )
             context = browser.new_context()
             page = context.new_page()
             
