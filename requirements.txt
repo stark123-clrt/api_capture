@@ -1,3 +1,4 @@
-flask==2.3.3
-playwright==1.40.0
+Flask==2.3.3
+numpy==1.24.3
+websocket-client==1.6.1
 gunicorn==21.2.0
