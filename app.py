@@ -202,8 +202,14 @@ class DerivDataCollector:
                 # Trouver la position correspondante
                 for pos in self.vix75_positions:
                     if pos.get('contract_id') == contract_id:
+                        contract_type = pos.get('contract_type', 'N/A')
+                        
+                        # Traduire le type de contrat
+                        contract_display = self.translate_contract_type(contract_type)
+                        
                         position_data = {
-                            'contract_type': pos.get('contract_type', 'N/A'),
+                            'contract_type_raw': contract_type,
+                            'contract_type': contract_display,
                             'buy_price': pos.get('buy_price', 'N/A'),
                             'profit_percentage': details.get('profit_percentage', 'N/A')
                         }
@@ -216,6 +222,27 @@ class DerivDataCollector:
         except Exception as e:
             self.result['error'] = str(e)
             self.completed = True
+    
+    def translate_contract_type(self, contract_type):
+        """Traduit les types de contrats Deriv en français"""
+        translations = {
+            'MULTUP': '📈 MULT UP (Achat/Hausse)',
+            'MULTDOWN': '📉 MULT DOWN (Vente/Baisse)',
+            'CALL': '📈 CALL (Achat/Hausse)',
+            'PUT': '📉 PUT (Vente/Baisse)',
+            'CALLE': '📈 CALL EUROPÉEN (Achat)',
+            'PUTE': '📉 PUT EUROPÉEN (Vente)',
+            'ONETOUCH': '🎯 ONE TOUCH',
+            'NOTOUCH': '🚫 NO TOUCH',
+            'RANGE': '📊 RANGE',
+            'UPORDOWN': '⚡ UP OR DOWN',
+            'EXPIRYMISS': '❌ EXPIRY MISS',
+            'EXPIRYRANGE': '🎯 EXPIRY RANGE',
+            'DIGITMATCH': '🔢 DIGIT MATCH',
+            'DIGITDIFF': '🔢 DIGIT DIFFER'
+        }
+        
+        return translations.get(contract_type, f'📋 {contract_type}')
     
     def check_completion(self):
         """Vérifie si toutes les données sont reçues"""
