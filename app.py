@@ -208,6 +208,7 @@ class DerivDataCollector:
                         contract_display = self.translate_contract_type(contract_type)
                         
                         position_data = {
+                            'contract_id': contract_id,
                             'contract_type_raw': contract_type,
                             'contract_type': contract_display,
                             'buy_price': pos.get('buy_price', 'N/A'),
