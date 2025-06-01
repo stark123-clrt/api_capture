@@ -459,16 +459,20 @@ def open_position():
                 # Pour MULTUP/MULTDOWN, format avec currency et price requis
                 buy_message = {
                     "buy": buy,  # 1 = acheter, garde la valeur du signal
-                    "price": float(parameters['amount']),  # Prix à payer
+                    "price": float(parameters['amount']),  # Prix à payer (requis par l'API)
                     "parameters": {
                         "contract_type": parameters['contract_type'],
                         "symbol": parameters['symbol'],
                         "amount": float(parameters['amount']),
                         "basis": "stake",
                         "multiplier": int(parameters['multiplier']),
-                        "currency": "USD"  # Devise du compte
+                        "currency": "USD",  # Devise du compte (requis par l'API)
+                        "stop_loss": float(parameters['stop_loss']),
+                        "take_profit": float(parameters['take_profit'])
                     }
                 }
+                
+                print(f"Message d'achat complet: {json.dumps(buy_message, indent=2)}")
                 
                 print(f"Message d'achat: {json.dumps(buy_message, indent=2)}")
                 
@@ -510,7 +514,6 @@ def open_position():
     except Exception as e:
         print(f"Erreur générale: {str(e)}")
         return jsonify({'success': False, 'error': f'Erreur serveur: {str(e)}'}), 500
-
 
 
 
