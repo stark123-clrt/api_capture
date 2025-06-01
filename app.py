@@ -399,6 +399,59 @@ def close_position():
 
 
 
+
+@app.route('/open_position', methods=['POST'])
+def open_position():
+    """
+    Endpoint pour ouvrir une position d'achat (buy).
+    Requiert un JSON avec les champs 'buy' et 'parameters' :
+    - 'buy' : 1 pour acheter,
+    - 'parameters' : dictionnaire avec 'contract_type', 'symbol', 'amount' (montant à miser), 'multiplier', 'stop_loss', 'take_profit'.
+    """
+    try:
+        data = request.get_json()
+
+        if not data or not isinstance(data, list) or not all('buy' in d and 'parameters' in d for d in data):
+            return jsonify({'success': False, 'error': 'Format de requête invalide. Attendu: [{"buy":..., "parameters": {...}}]'}), 400
+
+        API_TOKEN = "0BV3Ve4oK74HMlU"
+        buy = data[0]['buy']
+        parameters = data[0]['parameters']
+
+        # Préparation de la commande WebSocket
+        def send_buy_order():
+            ws = websocket.WebSocket()
+            ws.connect("wss://ws.derivws.com/websockets/v3?app_id=1089")
+            ws.send(json.dumps({"authorize": API_TOKEN}))
+            time.sleep(1)  
+
+            buy_message = {
+                "buy": buy,
+                "parameters": {
+                    "contract_type": parameters['contract_type'],
+                    "symbol": parameters['symbol'],
+                    "amount": parameters['amount'],       
+                    "basis": "stake",                     
+                    "multiplier": parameters['multiplier'],
+                    "stop_loss": parameters['stop_loss'],
+                    "take_profit": parameters['take_profit']
+                }
+            }
+
+            ws.send(json.dumps(buy_message))
+            time.sleep(2)  # attendre la confirmation
+            response = ws.recv()
+            ws.close()
+            return response
+
+        result = send_buy_order()
+        return jsonify({'success': True, 'response': json.loads(result)})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+
 if __name__ == '__main__':
     # Port pour Render (utilise la variable d'environnement PORT)
     import os
