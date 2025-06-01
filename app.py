@@ -409,46 +409,114 @@ def open_position():
     - 'parameters' : dictionnaire avec 'contract_type', 'symbol', 'amount' (montant à miser), 'multiplier', 'stop_loss', 'take_profit'.
     """
     try:
+        # Récupération des données
         data = request.get_json()
-
-        if not data or not isinstance(data, list) or not all('buy' in d and 'parameters' in d for d in data):
-            return jsonify({'success': False, 'error': 'Format de requête invalide. Attendu: [{"buy":..., "parameters": {...}}]'}), 400
-
+        print(f"Données reçues: {data}")  # Debug
+        
+        # Validation du format de base
+        if not data:
+            return jsonify({'success': False, 'error': 'Aucune donnée JSON reçue'}), 400
+            
+        # Si les données sont un tableau, prendre le premier élément
+        if isinstance(data, list):
+            if len(data) == 0:
+                return jsonify({'success': False, 'error': 'Tableau vide reçu'}), 400
+            data = data[0]
+        
+        # Validation des champs requis
+        if 'buy' not in data:
+            return jsonify({'success': False, 'error': 'Champ "buy" manquant'}), 400
+            
+        if 'parameters' not in data:
+            return jsonify({'success': False, 'error': 'Champ "parameters" manquant'}), 400
+        
+        buy = data['buy']
+        parameters = data['parameters']
+        
+        # Validation des paramètres requis
+        required_params = ['contract_type', 'symbol', 'amount', 'multiplier', 'stop_loss', 'take_profit']
+        for param in required_params:
+            if param not in parameters:
+                return jsonify({'success': False, 'error': f'Paramètre "{param}" manquant'}), 400
+        
         API_TOKEN = "0BV3Ve4oK74HMlU"
-        buy = data[0]['buy']
-        parameters = data[0]['parameters']
-
-        # Préparation de la commande WebSocket
+        
+        # Fonction pour envoyer l'ordre via WebSocket
         def send_buy_order():
-            ws = websocket.WebSocket()
-            ws.connect("wss://ws.derivws.com/websockets/v3?app_id=1089")
-            ws.send(json.dumps({"authorize": API_TOKEN}))
-            time.sleep(1)  
-
-            buy_message = {
-                "buy": buy,
-                "parameters": {
-                    "contract_type": parameters['contract_type'],
-                    "symbol": parameters['symbol'],
-                    "amount": parameters['amount'],       
-                    "basis": "stake",                     
-                    "multiplier": parameters['multiplier'],
-                    "stop_loss": parameters['stop_loss'],
-                    "take_profit": parameters['take_profit']
+            ws = None
+            try:
+                ws = websocket.WebSocket()
+                ws.connect("wss://ws.derivws.com/websockets/v3?app_id=1089")
+                
+                # Autorisation
+                auth_message = {"authorize": API_TOKEN}
+                ws.send(json.dumps(auth_message))
+                
+                # Attendre la réponse d'autorisation
+                auth_response = ws.recv()
+                print(f"Réponse d'autorisation: {auth_response}")
+                
+                # Préparation du message d'achat
+                buy_message = {
+                    "buy": buy,  # 1 = acheter, garde la valeur du signal
+                    "parameters": {
+                        "contract_type": parameters['contract_type'],
+                        "symbol": parameters['symbol'],
+                        "amount": float(parameters['amount']),  # S'assurer que c'est un nombre
+                        "basis": "stake",                     
+                        "multiplier": int(parameters['multiplier']),  # S'assurer que c'est un entier
+                        "stop_loss": float(parameters['stop_loss']) if parameters['stop_loss'] else None,
+                        "take_profit": float(parameters['take_profit']) if parameters['take_profit'] else None
+                    }
                 }
-            }
-
-            ws.send(json.dumps(buy_message))
-            time.sleep(2)  # attendre la confirmation
-            response = ws.recv()
-            ws.close()
-            return response
-
+                
+                # Enlever les paramètres None
+                if buy_message["parameters"]["stop_loss"] is None:
+                    del buy_message["parameters"]["stop_loss"]
+                if buy_message["parameters"]["take_profit"] is None:
+                    del buy_message["parameters"]["take_profit"]
+                
+                print(f"Message d'achat: {json.dumps(buy_message, indent=2)}")
+                
+                # Envoyer l'ordre
+                ws.send(json.dumps(buy_message))
+                
+                # Attendre la réponse
+                response = ws.recv()
+                print(f"Réponse de l'ordre: {response}")
+                
+                return response
+                
+            except Exception as e:
+                print(f"Erreur WebSocket: {str(e)}")
+                raise e
+            finally:
+                if ws:
+                    ws.close()
+        
+        # Exécuter l'ordre
         result = send_buy_order()
-        return jsonify({'success': True, 'response': json.loads(result)})
-
+        result_json = json.loads(result)
+        
+        return jsonify({
+            'success': True, 
+            'response': result_json,
+            'sent_data': {
+                'buy': buy,
+                'parameters': parameters
+            }
+        })
+        
+    except json.JSONDecodeError as e:
+        return jsonify({'success': False, 'error': f'Erreur de décodage JSON: {str(e)}'}), 400
+    except KeyError as e:
+        return jsonify({'success': False, 'error': f'Clé manquante: {str(e)}'}), 400
+    except ValueError as e:
+        return jsonify({'success': False, 'error': f'Erreur de valeur: {str(e)}'}), 400
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"Erreur générale: {str(e)}")
+        return jsonify({'success': False, 'error': f'Erreur serveur: {str(e)}'}), 500
+
 
 
 
