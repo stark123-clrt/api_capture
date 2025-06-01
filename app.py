@@ -456,15 +456,17 @@ def open_position():
                 auth_response = ws.recv()
                 print(f"Réponse d'autorisation: {auth_response}")
                 
-                # Pour MULTUP/MULTDOWN, format simplifié sans stop_loss/take_profit
+                # Pour MULTUP/MULTDOWN, format avec currency et price requis
                 buy_message = {
                     "buy": buy,  # 1 = acheter, garde la valeur du signal
+                    "price": float(parameters['amount']),  # Prix à payer
                     "parameters": {
                         "contract_type": parameters['contract_type'],
                         "symbol": parameters['symbol'],
                         "amount": float(parameters['amount']),
                         "basis": "stake",
-                        "multiplier": int(parameters['multiplier'])
+                        "multiplier": int(parameters['multiplier']),
+                        "currency": "USD"  # Devise du compte
                     }
                 }
                 
