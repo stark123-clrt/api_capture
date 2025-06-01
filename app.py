@@ -456,25 +456,17 @@ def open_position():
                 auth_response = ws.recv()
                 print(f"Réponse d'autorisation: {auth_response}")
                 
-                # Préparation du message d'achat
+                # Pour MULTUP/MULTDOWN, format simplifié sans stop_loss/take_profit
                 buy_message = {
                     "buy": buy,  # 1 = acheter, garde la valeur du signal
                     "parameters": {
                         "contract_type": parameters['contract_type'],
                         "symbol": parameters['symbol'],
-                        "amount": float(parameters['amount']),  # S'assurer que c'est un nombre
-                        "basis": "stake",                     
-                        "multiplier": int(parameters['multiplier']),  # S'assurer que c'est un entier
-                        "stop_loss": float(parameters['stop_loss']) if parameters['stop_loss'] else None,
-                        "take_profit": float(parameters['take_profit']) if parameters['take_profit'] else None
+                        "amount": float(parameters['amount']),
+                        "basis": "stake",
+                        "multiplier": int(parameters['multiplier'])
                     }
                 }
-                
-                # Enlever les paramètres None
-                if buy_message["parameters"]["stop_loss"] is None:
-                    del buy_message["parameters"]["stop_loss"]
-                if buy_message["parameters"]["take_profit"] is None:
-                    del buy_message["parameters"]["take_profit"]
                 
                 print(f"Message d'achat: {json.dumps(buy_message, indent=2)}")
                 
