@@ -359,7 +359,6 @@ def health():
 
 
 
-
 @app.route('/open_position', methods=['POST'])
 def open_position():
     """
@@ -416,7 +415,7 @@ def open_position():
                 auth_response = ws.recv()
                 print(f"Réponse d'autorisation: {auth_response}")
                 
-                # Pour MULTUP/MULTDOWN, format avec currency et price requis
+                # Format correct pour MULTUP/MULTDOWN avec limit_order
                 buy_message = {
                     "buy": buy,  # 1 = acheter, garde la valeur du signal
                     "price": float(parameters['amount']),  # Prix à payer (requis par l'API)
@@ -427,14 +426,14 @@ def open_position():
                         "basis": "stake",
                         "multiplier": int(parameters['multiplier']),
                         "currency": "USD",  # Devise du compte (requis par l'API)
-                        "stop_loss": float(parameters['stop_loss']),
-                        "take_profit": float(parameters['take_profit'])
+                        "limit_order": {
+                            "stop_loss": float(parameters['stop_loss']),
+                            "take_profit": float(parameters['take_profit'])
+                        }
                     }
                 }
                 
-                print(f"Message d'achat complet: {json.dumps(buy_message, indent=2)}")
-                
-                print(f"Message d'achat: {json.dumps(buy_message, indent=2)}")
+                print(f"Message d'achat avec limit_order: {json.dumps(buy_message, indent=2)}")
                 
                 # Envoyer l'ordre
                 ws.send(json.dumps(buy_message))
@@ -474,8 +473,6 @@ def open_position():
     except Exception as e:
         print(f"Erreur générale: {str(e)}")
         return jsonify({'success': False, 'error': f'Erreur serveur: {str(e)}'}), 500
-
-
 
 
 
