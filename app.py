@@ -476,6 +476,50 @@ def open_position():
 
 
 
+@app.route('/close_position', methods=['POST'])
+def close_position():
+    """
+    Endpoint pour fermer une position ouverte.
+    Requiert un JSON avec les champs 'sell' et 'contract_id'.
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or not isinstance(data, list) or not all('sell' in d and 'contract_id' in d for d in data):
+            return jsonify({'success': False, 'error': 'Format de requête invalide. Attendu: [{"sell":..., "contract_id":...}]'}), 400
+
+        API_TOKEN = "0BV3Ve4oK74HMlU"
+        contract_id = data[0]['contract_id']
+        sell_price = data[0]['sell']
+
+        # Préparation de la commande WebSocket
+        def send_sell_order():
+            ws = websocket.WebSocket()
+            ws.connect("wss://ws.derivws.com/websockets/v3?app_id=1089")
+            ws.send(json.dumps({"authorize": API_TOKEN}))
+            time.sleep(1)  # Laisser le temps à l'auth
+
+            sell_message = {
+                "sell": contract_id,
+                "price": sell_price
+            }
+
+            ws.send(json.dumps(sell_message))
+            time.sleep(2)  # Attente de la confirmation
+            response = ws.recv()
+            ws.close()
+            return response
+
+        result = send_sell_order()
+        return jsonify({'success': True, 'response': json.loads(result)})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+
+
+                        
 
 if __name__ == '__main__':
     # Port pour Render (utilise la variable d'environnement PORT)
