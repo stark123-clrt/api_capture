@@ -100,7 +100,7 @@ class DerivDataCollector:
         self.highs = []
         self.lows = []
         self.closes = []
-        self.vix75_positions = []
+        self.v10_positions = []
         self.positions_detailed = False
         self.candles_received = False
         
@@ -117,11 +117,11 @@ class DerivDataCollector:
                 
                 # Récupérer les bougies
                 candles_message = {
-                    "ticks_history": "R_75",
+                    "ticks_history": "R_10",
                     "adjust_start_time": 1,
                     "count": 50,
                     "end": "latest",
-                    "granularity": 900,  # 15 minutes
+                    "granularity": 300,  # 5 minutes
                     "style": "candles"
                 }
                 ws.send(json.dumps(candles_message))
@@ -169,11 +169,11 @@ class DerivDataCollector:
                 portfolio = data['portfolio']
                 if 'contracts' in portfolio:
                     positions = portfolio['contracts']
-                    self.vix75_positions = [p for p in positions if p.get('symbol') == 'R_75']
+                    self.v10_positions = [p for p in positions if p.get('symbol') == 'R_10']
                     
-                    if self.vix75_positions:
+                    if self.v10_positions:
                         # Demander les détails pour chaque position
-                        for pos in self.vix75_positions:
+                        for pos in self.v10_positions:
                             contract_id = pos.get('contract_id')
                             if contract_id:
                                 detail_message = {
@@ -200,7 +200,7 @@ class DerivDataCollector:
                     self.result['positions'] = []
                 
                 # Trouver la position correspondante
-                for pos in self.vix75_positions:
+                for pos in self.v10_positions:
                     if pos.get('contract_id') == contract_id:
                         contract_type = pos.get('contract_type', 'N/A')
                         
@@ -292,8 +292,8 @@ class DerivDataCollector:
         
         return self.result
 
-def get_vix75_data():
-    """Fonction pour récupérer les données VIX75"""
+def get_v10_data():
+    """Fonction pour récupérer les données V10"""
     API_TOKEN = "0BV3Ve4oK74HMlU"
     
     try:
@@ -304,15 +304,15 @@ def get_vix75_data():
         return {'error': str(e)}
 
 @app.route('/')
-def vix75_data():
+def v10_data():
     """
-    API endpoint pour récupérer les données VIX75
+    API endpoint pour récupérer les données V10
     """
     try:
-        logger.info("📊 Récupération des données VIX75...")
+        logger.info("📊 Récupération des données V10...")
         
         # Récupérer les données
-        data = get_vix75_data()
+        data = get_v10_data()
         
         if 'error' in data:
             logger.error(f"❌ Erreur: {data['error']}")
@@ -330,7 +330,7 @@ def vix75_data():
                 'currency': data.get('currency', '')
             },
             'market': {
-                'symbol': 'VIX75',
+                'symbol': 'V10',
                 'current_price': data.get('current_price', 'N/A')
             },
             'indicators': data.get('indicators', {}),
@@ -352,7 +352,7 @@ def health():
     """Vérifier que le service fonctionne"""
     return jsonify({
         'status': 'active',
-        'service': 'VIX75 Deriv API',
+        'service': 'V10 Deriv API',
         'timestamp': time.time()
     })
 
@@ -526,7 +526,7 @@ if __name__ == '__main__':
     import os
     PORT = int(os.environ.get('PORT', 5000))
     
-    print("🚀 API Deriv VIX75 démarrée")
+    print("🚀 API Deriv V10 démarrée")
     print(f"📍 Port: {PORT}")
     
     app.run(host='0.0.0.0', port=PORT, debug=False)
