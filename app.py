@@ -117,7 +117,7 @@ class DerivDataCollector:
                 
                 # Récupérer les bougies
                 candles_message = {
-                    "ticks_history": "R_10",
+                    "ticks_history": "R_75",
                     "adjust_start_time": 1,
                     "count": 50,
                     "end": "latest",
@@ -169,7 +169,7 @@ class DerivDataCollector:
                 portfolio = data['portfolio']
                 if 'contracts' in portfolio:
                     positions = portfolio['contracts']
-                    self.v10_positions = [p for p in positions if p.get('symbol') == 'R_10']
+                    self.v10_positions = [p for p in positions if p.get('symbol') == 'R_75']
                     
                     if self.v10_positions:
                         # Demander les détails pour chaque position
@@ -292,7 +292,7 @@ class DerivDataCollector:
         
         return self.result
 
-def get_v10_data():
+def get_v75_data():
     """Fonction pour récupérer les données V10"""
     API_TOKEN = "0BV3Ve4oK74HMlU"
     
@@ -304,7 +304,7 @@ def get_v10_data():
         return {'error': str(e)}
 
 @app.route('/')
-def v10_data():
+def v75_data():
     """
     API endpoint pour récupérer les données V10
     """
@@ -330,7 +330,7 @@ def v10_data():
                 'currency': data.get('currency', '')
             },
             'market': {
-                'symbol': 'V10',
+                'symbol': 'V75',
                 'current_price': data.get('current_price', 'N/A')
             },
             'indicators': data.get('indicators', {}),
