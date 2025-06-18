@@ -100,7 +100,7 @@ class DerivDataCollector:
         self.highs = []
         self.lows = []
         self.closes = []
-        self.v10_positions = []
+        self.v75_positions = []
         self.positions_detailed = False
         self.candles_received = False
         
@@ -115,7 +115,7 @@ class DerivDataCollector:
                 self.result['balance'] = auth_data.get('balance', 'N/A')
                 self.result['currency'] = auth_data.get('currency', '')
                 
-                # Récupérer les bougies
+                # Récupérer les bougies V75
                 candles_message = {
                     "ticks_history": "R_75",
                     "adjust_start_time": 1,
@@ -169,11 +169,11 @@ class DerivDataCollector:
                 portfolio = data['portfolio']
                 if 'contracts' in portfolio:
                     positions = portfolio['contracts']
-                    self.v10_positions = [p for p in positions if p.get('symbol') == 'R_75']
+                    self.v75_positions = [p for p in positions if p.get('symbol') == 'R_75']
                     
-                    if self.v10_positions:
+                    if self.v75_positions:
                         # Demander les détails pour chaque position
-                        for pos in self.v10_positions:
+                        for pos in self.v75_positions:
                             contract_id = pos.get('contract_id')
                             if contract_id:
                                 detail_message = {
@@ -200,7 +200,7 @@ class DerivDataCollector:
                     self.result['positions'] = []
                 
                 # Trouver la position correspondante
-                for pos in self.v10_positions:
+                for pos in self.v75_positions:
                     if pos.get('contract_id') == contract_id:
                         contract_type = pos.get('contract_type', 'N/A')
                         
@@ -293,7 +293,7 @@ class DerivDataCollector:
         return self.result
 
 def get_v75_data():
-    """Fonction pour récupérer les données V10"""
+    """Fonction pour récupérer les données V75"""
     API_TOKEN = "0BV3Ve4oK74HMlU"
     
     try:
@@ -306,13 +306,13 @@ def get_v75_data():
 @app.route('/')
 def v75_data():
     """
-    API endpoint pour récupérer les données V10
+    API endpoint pour récupérer les données V75
     """
     try:
-        logger.info("📊 Récupération des données V10...")
+        logger.info("📊 Récupération des données V75...")
         
         # Récupérer les données
-        data = get_v10_data()
+        data = get_v75_data()
         
         if 'error' in data:
             logger.error(f"❌ Erreur: {data['error']}")
@@ -352,9 +352,12 @@ def health():
     """Vérifier que le service fonctionne"""
     return jsonify({
         'status': 'active',
-        'service': 'V10 Deriv API',
+        'service': 'V75 Deriv API',
         'timestamp': time.time()
     })
+
+
+
 
 
 
