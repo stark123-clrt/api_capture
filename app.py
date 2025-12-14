@@ -263,69 +263,52 @@ class DerivDataCollector:
                 statement = data['statement']
                 if 'transactions' in statement:
                     transactions = statement['transactions']
-
-                    # Fusionner les transactions par contract_id (chaque transaction a 2 lignes: buy et sell)
-                    tx_map = {}
-
-                    for transaction in transactions:
-                        contract_id = transaction.get('identifiant_du_contrat', transaction.get('contract_id'))
-                        
-                        if contract_id not in tx_map:
-                            tx_map[contract_id] = {
-                                'montant_misé': 0,
-                                'paiement': 0,
-                                'référence': None,
-                                'app_id': transaction.get('app_id')
-                            }
-                        
-                        # Accumuler montant et paiement
-                        montant = transaction.get('montant', 0)
-                        paiement = transaction.get('paiement', 0)
-                        
-                        if montant < 0:
-                            tx_map[contract_id]['montant_misé'] = abs(montant)
-                        if paiement > 0:
-                            tx_map[contract_id]['paiement'] = paiement
-                        
-                        # Garder la référence (première valeur non-null trouvée)
-                        ref = transaction.get('référence')
-                        if ref and ref != 'null' and ref != 'nulle' and ref != 'N/A':
-                            tx_map[contract_id]['référence'] = ref
                     
-                    # Convertir en liste et calculer profit/status - FILTRER les transactions valides
-                    for contract_id, tx_data in tx_map.items():
-                        montant_misé = tx_data['montant_misé']
-                        paiement = tx_data['paiement']
-                        référence = tx_data['référence']
+                    # Retourner les transactions brutes en gardant juste les champs utiles
+                    for transaction in transactions:
+                        # Vérifier qu'on a au moins une référence et une position
+                        ref = transaction.get('référence')
+                        montant = transaction.get('montant', 0)
                         
-                        # Ignorer les transactions sans position ou sans référence
-                        if montant_misé == 0 or référence is None:
+                        # Ignorer si pas de référence valide ou montant vide
+                        if not ref or ref == 'null' or ref == 'nulle':
                             continue
                         
-                        profit = paiement - montant_misé
+                        # Ignorer les lignes sans montant (c'est du bruit)
+                        if montant == 0:
+                            continue
                         
-                        # Déterminer le statut
-                        if profit > 0:
-                            status = 'won'
-                        elif profit < 0:
-                            status = 'lost'
-                        else:
-                            status = 'neutral'
-                        
-                        cleaned_tx = {
-                            'référence': référence,
-                            'contract_id': contract_id,
-                            'position': montant_misé,
-                            'payout': paiement,
-                            'profit': round(profit, 2),
-                            'status': status
-                        }
-                        self.transactions.append(cleaned_tx)
+                        # Traiter juste les montants positifs (transactions complètes)
+                        if montant > 0:
+                            contract_id = transaction.get('identifiant_du_contrat', transaction.get('contract_id'))
+                            paiement = transaction.get('paiement', 0)
+                            profit = paiement - montant
+                            
+                            # Déterminer le statut
+                            if paiement == 0:
+                                status = 'open'
+                            elif profit > 0:
+                                status = 'won'
+                            elif profit < 0:
+                                status = 'lost'
+                            else:
+                                status = 'neutral'
+                            
+                            cleaned_tx = {
+                                'référence': ref,
+                                'contract_id': contract_id,
+                                'position': montant,
+                                'payout': paiement,
+                                'profit': round(profit, 2),
+                                'status': status,
+                                'timestamp': transaction.get('horodatage', transaction.get('transaction_time', ''))
+                            }
+                            self.transactions.append(cleaned_tx)
                     
-                    # Limiter à 15 transactions max et garder les plus récentes
+                    # Limiter à 15 et garder les plus récentes
                     self.result['transactions'] = self.transactions[-15:] if len(self.transactions) > 15 else self.transactions
                 
-                # Marquer comme reçu même s'il n'y a pas de transactions
+                # Marquer comme reçu
                 self.transactions_received = True
                 self.check_completion()
                 
