@@ -314,7 +314,7 @@ class DerivDataCollector:
                                 'payout': round(payout, 2),
                                 'profit': profit,
                                 'status': status,
-                                'timestamp': sell_tx.get('transaction_time', 0)
+                                'timestamp': sell_tx.get('timestamp', sell_tx.get('transaction_time', 0))
                             }
                             self.transactions.append(cleaned_tx)
                     
