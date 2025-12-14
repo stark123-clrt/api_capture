@@ -324,8 +324,10 @@ class DerivDataCollector:
                     
                     # Limiter à 15 transactions max et garder les plus récentes
                     self.result['transactions'] = self.transactions[-15:] if len(self.transactions) > 15 else self.transactions
-                    self.transactions_received = True
-                    self.check_completion()
+                
+                # Marquer comme reçu même s'il n'y a pas de transactions
+                self.transactions_received = True
+                self.check_completion()
                 
         except Exception as e:
             self.result['error'] = str(e)
