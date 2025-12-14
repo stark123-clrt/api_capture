@@ -264,10 +264,57 @@ class DerivDataCollector:
                 if 'transactions' in statement:
                     transactions = statement['transactions']
                     
-                    # Extraire les transactions sans renommer les champs (garder les noms de Deriv)
+                    # Fusionner les transactions par contract_id (chaque transaction a 2 lignes: buy et sell)
+                    tx_map = {}
+                    
                     for transaction in transactions:
-                        # Retourner la transaction telle quelle avec les noms de champs exactes de Deriv
-                        self.transactions.append(transaction)
+                        contract_id = transaction.get('identifiant_du_contrat', transaction.get('contract_id'))
+                        
+                        if contract_id not in tx_map:
+                            tx_map[contract_id] = {
+                                'montant_misé': 0,
+                                'paiement': 0,
+                                'référence': None,
+                                'app_id': transaction.get('app_id')
+                            }
+                        
+                        # Accumuler montant et paiement
+                        montant = transaction.get('montant', 0)
+                        paiement = transaction.get('paiement', 0)
+                        
+                        if montant < 0:
+                            tx_map[contract_id]['montant_misé'] = abs(montant)
+                        if paiement > 0:
+                            tx_map[contract_id]['paiement'] = paiement
+                        
+                        # Garder la référence (première valeur non-null trouvée)
+                        ref = transaction.get('référence')
+                        if ref and ref != 'null' and ref != 'nulle' and ref != 'N/A':
+                            tx_map[contract_id]['référence'] = ref
+                    
+                    # Convertir en liste et calculer profit/status
+                    for contract_id, tx_data in tx_map.items():
+                        montant_misé = tx_data['montant_misé']
+                        paiement = tx_data['paiement']
+                        profit = paiement - montant_misé
+                        
+                        # Déterminer le statut
+                        if profit > 0:
+                            status = 'won'
+                        elif profit < 0:
+                            status = 'lost'
+                        else:
+                            status = 'neutral'
+                        
+                        cleaned_tx = {
+                            'référence': tx_data['référence'],
+                            'contract_id': contract_id,
+                            'position': montant_misé,
+                            'payout': paiement,
+                            'profit': round(profit, 2),
+                            'status': status
+                        }
+                        self.transactions.append(cleaned_tx)
                     
                     # Limiter à 15 transactions max et garder les plus récentes
                     self.result['transactions'] = self.transactions[-15:] if len(self.transactions) > 15 else self.transactions
