@@ -364,10 +364,11 @@ class DerivDataCollector:
         return translations.get(contract_type, f'📋 {contract_type}')
     
     def check_completion(self):
-        """Vérifie si toutes les données sont reçues"""
+        """Vérifie si toutes les données essentielles sont reçues (transactions optionnelles)"""
         logger.info(f"🔄 Check: candles={self.candles_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
-        if self.candles_received and self.positions_detailed and self.transactions_received:
-            logger.info("✅ Toutes les données sont reçues!")
+        # Les transactions sont optionnelles - on attend juste les bougies et positions
+        if self.candles_received and self.positions_detailed:
+            logger.info("✅ Données essentielles reçues!")
             self.completed = True
     
     def on_error(self, ws, error):
