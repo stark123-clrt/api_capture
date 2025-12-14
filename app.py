@@ -371,7 +371,7 @@ class DerivDataCollector:
         thread.start()
         
         # Attendre que la collecte soit terminée
-        timeout = 15
+        timeout = 25
         start_time = time.time()
         
         while not self.completed and (time.time() - start_time) < timeout:
