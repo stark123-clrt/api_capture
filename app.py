@@ -169,6 +169,7 @@ class DerivDataCollector:
                     stoch_k = TechnicalIndicators.stochastic(self.highs, self.lows, self.closes)
                     atr = TechnicalIndicators.atr(self.highs, self.lows, self.closes)
                     bb_upper, bb_middle, bb_lower = TechnicalIndicators.bollinger_bands(self.closes)
+                    ema = TechnicalIndicators.ema(self.closes)
                     
                     self.result['indicators'] = {
                         'rsi': rsi,
@@ -176,7 +177,8 @@ class DerivDataCollector:
                         'atr': atr,
                         'bollinger_upper': bb_upper,
                         'bollinger_middle': bb_middle,
-                        'bollinger_lower': bb_lower
+                        'bollinger_lower': bb_lower,
+                        'ema': ema
                     }
                     
                 self.candles_received = True
