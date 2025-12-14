@@ -91,7 +91,7 @@ class TechnicalIndicators:
         return round(upper, 2), round(middle, 2), round(lower, 2)
     
     @staticmethod
-    def ema(prices, period=12):
+    def ema(prices, period=20):
         """Calcul de l'EMA (Exponential Moving Average)"""
         if len(prices) < period:
             return None
