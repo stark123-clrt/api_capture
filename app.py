@@ -118,6 +118,7 @@ class DerivDataCollector:
         self.highs = []
         self.lows = []
         self.closes = []
+        self.candles = []
         self.v75_positions = []
         self.positions_detailed = False
         self.candles_received = False
@@ -151,6 +152,7 @@ class DerivDataCollector:
             # Données de bougie reçues
             elif 'candles' in data:
                 candles = data['candles']
+                parsed_candles = []
                 
                 # Extraire les données (format dictionnaire)
                 for candle in candles:
@@ -158,6 +160,15 @@ class DerivDataCollector:
                         self.highs.append(candle['high'])
                         self.lows.append(candle['low'])
                         self.closes.append(candle['close'])
+                        parsed_candles.append({
+                            'epoch': candle.get('epoch'),
+                            'open': candle.get('open'),
+                            'high': candle.get('high'),
+                            'low': candle.get('low'),
+                            'close': candle.get('close')
+                        })
+                # Conserver les 50 dernières bougies reçues (ordre API)
+                self.candles = parsed_candles
                 
                 # Calculer les indicateurs
                 if len(self.closes) > 0:
@@ -180,6 +191,7 @@ class DerivDataCollector:
                         'bollinger_lower': bb_lower,
                         'ema': ema
                     }
+                    self.result['candles'] = self.candles
                     
                 self.candles_received = True
                 self.check_completion()
