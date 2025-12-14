@@ -89,6 +89,24 @@ class TechnicalIndicators:
         lower = middle - (std_dev * std)
         
         return round(upper, 2), round(middle, 2), round(lower, 2)
+    
+    @staticmethod
+    def ema(prices, period=12):
+        """Calcul de l'EMA (Exponential Moving Average)"""
+        if len(prices) < period:
+            return None
+        
+        # Multiplicateur de lissage
+        multiplier = 2 / (period + 1)
+        
+        # EMA simple au départ = SMA
+        ema = np.mean(prices[:period])
+        
+        # Appliquer la formule EMA sur le reste des données
+        for price in prices[period:]:
+            ema = (price * multiplier) + (ema * (1 - multiplier))
+        
+        return round(ema, 2)
 
 class DerivDataCollector:
     def __init__(self, api_token):
