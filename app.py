@@ -292,10 +292,16 @@ class DerivDataCollector:
                         if ref and ref != 'null' and ref != 'nulle' and ref != 'N/A':
                             tx_map[contract_id]['référence'] = ref
                     
-                    # Convertir en liste et calculer profit/status
+                    # Convertir en liste et calculer profit/status - FILTRER les transactions valides
                     for contract_id, tx_data in tx_map.items():
                         montant_misé = tx_data['montant_misé']
                         paiement = tx_data['paiement']
+                        référence = tx_data['référence']
+                        
+                        # Ignorer les transactions sans position ou sans référence
+                        if montant_misé == 0 or référence is None:
+                            continue
+                        
                         profit = paiement - montant_misé
                         
                         # Déterminer le statut
@@ -307,7 +313,7 @@ class DerivDataCollector:
                             status = 'neutral'
                         
                         cleaned_tx = {
-                            'référence': tx_data['référence'],
+                            'référence': référence,
                             'contract_id': contract_id,
                             'position': montant_misé,
                             'payout': paiement,
