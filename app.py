@@ -129,12 +129,14 @@ class DerivDataCollector:
         """Traite les messages reçus de l'API"""
         try:
             data = json.loads(message)
+            logger.info(f"📨 Message reçu: {list(data.keys())}")
             
             # Authentification réussie
             if 'authorize' in data and data['authorize']:
                 auth_data = data['authorize']
                 self.result['balance'] = auth_data.get('balance', 'N/A')
                 self.result['currency'] = auth_data.get('currency', '')
+                logger.info(f"✅ Authentifié - Balance: {self.result['balance']}")
                 
                 # Récupérer les bougies V75
                 candles_message = {
@@ -151,7 +153,7 @@ class DerivDataCollector:
                 portfolio_message = {"portfolio": 1}
                 ws.send(json.dumps(portfolio_message))
                 
-                # Récupérer les 50 dernières transactions (pour filtrer ensuite par V75)
+                # Récupérer les 50 dernières transactions
                 statement_message = {"statement": 1, "description": 1, "limit": 50}
                 ws.send(json.dumps(statement_message))
                 
@@ -198,7 +200,8 @@ class DerivDataCollector:
                         'ema': ema
                     }
                     self.result['candles'] = self.candles
-                    
+                
+                logger.info(f"📊 {len(self.candles)} bougies reçues")
                 self.candles_received = True
                 self.check_completion()
                 
@@ -258,61 +261,89 @@ class DerivDataCollector:
                 self.positions_detailed = True
                 self.check_completion()
                     
-            # Historique des transactions
+            # Historique des transactions - CORRIGÉ
             elif 'statement' in data:
                 statement = data['statement']
+                logger.info(f"📋 Statement reçu: {json.dumps(statement, indent=2)[:500]}")
+                
                 if 'transactions' in statement:
                     transactions = statement['transactions']
+                    logger.info(f"📋 {len(transactions)} transactions brutes reçues")
                     
-                    # Retourner les transactions brutes en gardant juste les champs utiles
+                    # Debug: afficher la structure d'une transaction
+                    if transactions:
+                        logger.info(f"🔍 Structure d'une transaction: {json.dumps(transactions[0], indent=2)}")
+                    
                     for transaction in transactions:
-                        # Vérifier qu'on a au moins une référence et une position
-                        ref = transaction.get('référence')
-                        montant = transaction.get('montant', 0)
+                        # L'API Deriv utilise des clés EN ANGLAIS, pas en français !
+                        # Clés correctes: transaction_id, contract_id, action_type, amount, payout, transaction_time, etc.
                         
-                        # Ignorer si pas de référence valide ou montant vide
-                        if not ref or ref == 'null' or ref == 'nulle':
-                            continue
+                        action_type = transaction.get('action_type', '')
+                        amount = transaction.get('amount', 0)
                         
-                        # Ignorer les lignes sans montant (c'est du bruit)
-                        if montant == 0:
-                            continue
-                        
-                        # Traiter juste les montants positifs (transactions complètes)
-                        if montant > 0:
-                            contract_id = transaction.get('identifiant_du_contrat', transaction.get('contract_id'))
-                            paiement = transaction.get('paiement', 0)
-                            profit = paiement - montant
+                        # On garde toutes les transactions de type 'sell' ou 'buy'
+                        # ou celles qui ont un montant significatif
+                        if action_type in ['sell', 'buy'] or amount != 0:
                             
-                            # Déterminer le statut
-                            if paiement == 0:
+                            # Récupérer les données avec les BONNES clés
+                            transaction_id = transaction.get('transaction_id')
+                            contract_id = transaction.get('contract_id')
+                            payout = transaction.get('payout', 0)
+                            balance_after = transaction.get('balance_after', 0)
+                            transaction_time = transaction.get('transaction_time', '')
+                            longcode = transaction.get('longcode', '')
+                            short_code = transaction.get('shortcode', '')
+                            
+                            # Calculer le profit
+                            # Pour une vente (sell), le profit = amount (car c'est le gain net)
+                            # Pour un achat (buy), amount est négatif (débit du compte)
+                            if action_type == 'sell':
+                                # C'est une clôture de position
+                                profit = amount  # Le montant est déjà le profit/perte
+                                status = 'won' if amount > 0 else 'lost' if amount < 0 else 'neutral'
+                            elif action_type == 'buy':
+                                # C'est une ouverture de position
+                                profit = 0
                                 status = 'open'
-                            elif profit > 0:
-                                status = 'won'
-                            elif profit < 0:
-                                status = 'lost'
                             else:
-                                status = 'neutral'
+                                profit = amount
+                                status = 'unknown'
                             
                             cleaned_tx = {
-                                'référence': ref,
+                                'transaction_id': transaction_id,
                                 'contract_id': contract_id,
-                                'position': montant,
-                                'payout': paiement,
+                                'action_type': action_type,
+                                'amount': round(amount, 2) if amount else 0,
+                                'payout': round(payout, 2) if payout else 0,
                                 'profit': round(profit, 2),
                                 'status': status,
-                                'timestamp': transaction.get('horodatage', transaction.get('transaction_time', ''))
+                                'balance_after': round(balance_after, 2) if balance_after else 0,
+                                'timestamp': transaction_time,
+                                'description': longcode or short_code
                             }
                             self.transactions.append(cleaned_tx)
+                            logger.info(f"✅ Transaction ajoutée: {cleaned_tx['transaction_id']} - {action_type} - {amount}")
                     
-                    # Limiter à 15 et garder les plus récentes
+                    # Garder les 15 plus récentes
                     self.result['transactions'] = self.transactions[-15:] if len(self.transactions) > 15 else self.transactions
+                    logger.info(f"📋 {len(self.result['transactions'])} transactions finales")
+                else:
+                    logger.warning("⚠️ Pas de clé 'transactions' dans le statement")
+                    self.result['transactions'] = []
                 
                 # Marquer comme reçu
                 self.transactions_received = True
                 self.check_completion()
+            
+            # Gestion des erreurs API
+            elif 'error' in data:
+                error = data['error']
+                logger.error(f"❌ Erreur API: {error.get('message', 'Unknown error')}")
                 
         except Exception as e:
+            logger.error(f"❌ Erreur traitement message: {str(e)}")
+            import traceback
+            traceback.print_exc()
             self.result['error'] = str(e)
             self.completed = True
     
@@ -339,17 +370,21 @@ class DerivDataCollector:
     
     def check_completion(self):
         """Vérifie si toutes les données sont reçues"""
+        logger.info(f"🔄 Check: candles={self.candles_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
         if self.candles_received and self.positions_detailed and self.transactions_received:
+            logger.info("✅ Toutes les données sont reçues!")
             self.completed = True
     
     def on_error(self, ws, error):
+        logger.error(f"❌ WebSocket Error: {str(error)}")
         self.result['error'] = str(error)
         self.completed = True
     
     def on_close(self, ws, close_status_code, close_msg):
-        pass
+        logger.info(f"🔌 WebSocket fermé: {close_status_code} - {close_msg}")
     
     def on_open(self, ws):
+        logger.info("🔌 WebSocket ouvert, envoi de l'authentification...")
         # S'authentifier
         auth_message = {"authorize": self.api_token}
         ws.send(json.dumps(auth_message))
@@ -381,6 +416,7 @@ class DerivDataCollector:
         
         if not self.completed:
             self.result['error'] = 'Timeout - données incomplètes'
+            logger.warning(f"⚠️ Timeout! candles={self.candles_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
         
         return self.result
 
@@ -393,6 +429,7 @@ def get_v75_data():
         data = collector.collect_data()
         return data
     except Exception as e:
+        logger.error(f"❌ Erreur get_v75_data: {str(e)}")
         return {'error': str(e)}
 
 @app.route('/')
@@ -431,7 +468,7 @@ def v75_data():
             'transactions': data.get('transactions', [])
         }
         
-        logger.info("✅ Données récupérées avec succès")
+        logger.info(f"✅ Données récupérées - {len(response['transactions'])} transactions")
         return jsonify(response)
         
     except Exception as e:
@@ -449,11 +486,6 @@ def health():
         'service': 'V75 Deriv API',
         'timestamp': time.time()
     })
-
-
-
-
-
 
 
 @app.route('/open_position', methods=['POST'])
@@ -613,10 +645,6 @@ def close_position():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-
-
-
-                        
 
 if __name__ == '__main__':
     # Port pour Render (utilise la variable d'environnement PORT)
