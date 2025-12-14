@@ -264,68 +264,63 @@ class DerivDataCollector:
             # Historique des transactions - CORRIGÉ
             elif 'statement' in data:
                 statement = data['statement']
-                logger.info(f"📋 Statement reçu: {json.dumps(statement, indent=2)[:500]}")
+                logger.info(f"📋 Statement reçu")
                 
                 if 'transactions' in statement:
                     transactions = statement['transactions']
                     logger.info(f"📋 {len(transactions)} transactions brutes reçues")
                     
-                    # Debug: afficher la structure d'une transaction
-                    if transactions:
-                        logger.info(f"🔍 Structure d'une transaction: {json.dumps(transactions[0], indent=2)}")
+                    # On regroupe les transactions par contract_id pour avoir buy + sell ensemble
+                    contracts = {}
                     
                     for transaction in transactions:
-                        # L'API Deriv utilise des clés EN ANGLAIS, pas en français !
-                        # Clés correctes: transaction_id, contract_id, action_type, amount, payout, transaction_time, etc.
-                        
                         action_type = transaction.get('action_type', '')
-                        amount = transaction.get('amount', 0)
+                        contract_id = transaction.get('contract_id')
                         
-                        # On garde toutes les transactions de type 'sell' ou 'buy'
-                        # ou celles qui ont un montant significatif
-                        if action_type in ['sell', 'buy'] or amount != 0:
+                        if not contract_id:
+                            continue
+                        
+                        if contract_id not in contracts:
+                            contracts[contract_id] = {'buy': None, 'sell': None}
+                        
+                        if action_type == 'buy':
+                            contracts[contract_id]['buy'] = transaction
+                        elif action_type == 'sell':
+                            contracts[contract_id]['sell'] = transaction
+                    
+                    # Construire les transactions finales
+                    for contract_id, data in contracts.items():
+                        buy_tx = data['buy']
+                        sell_tx = data['sell']
+                        
+                        # On ne garde que les contrats terminés (avec buy ET sell)
+                        if buy_tx and sell_tx:
+                            position = abs(buy_tx.get('amount', 0))
+                            payout = sell_tx.get('amount', 0)
+                            profit = round(payout - position, 2)
                             
-                            # Récupérer les données avec les BONNES clés
-                            transaction_id = transaction.get('transaction_id')
-                            contract_id = transaction.get('contract_id')
-                            payout = transaction.get('payout', 0)
-                            balance_after = transaction.get('balance_after', 0)
-                            transaction_time = transaction.get('transaction_time', '')
-                            longcode = transaction.get('longcode', '')
-                            short_code = transaction.get('shortcode', '')
-                            
-                            # Calculer le profit
-                            # Pour une vente (sell), le profit = amount (car c'est le gain net)
-                            # Pour un achat (buy), amount est négatif (débit du compte)
-                            if action_type == 'sell':
-                                # C'est une clôture de position
-                                profit = amount  # Le montant est déjà le profit/perte
-                                status = 'won' if amount > 0 else 'lost' if amount < 0 else 'neutral'
-                            elif action_type == 'buy':
-                                # C'est une ouverture de position
-                                profit = 0
-                                status = 'open'
+                            # Déterminer le statut
+                            if profit > 0:
+                                status = 'won'
+                            elif profit < 0:
+                                status = 'lost'
                             else:
-                                profit = amount
-                                status = 'unknown'
+                                status = 'neutral'
                             
                             cleaned_tx = {
-                                'transaction_id': transaction_id,
-                                'contract_id': contract_id,
-                                'action_type': action_type,
-                                'amount': round(amount, 2) if amount else 0,
-                                'payout': round(payout, 2) if payout else 0,
-                                'profit': round(profit, 2),
+                                'référence': str(sell_tx.get('transaction_id', '')),
+                                'contract_id': str(contract_id),
+                                'position': round(position, 2),
+                                'payout': round(payout, 2),
+                                'profit': profit,
                                 'status': status,
-                                'balance_after': round(balance_after, 2) if balance_after else 0,
-                                'timestamp': transaction_time,
-                                'description': longcode or short_code
+                                'timestamp': sell_tx.get('transaction_time', 0)
                             }
                             self.transactions.append(cleaned_tx)
-                            logger.info(f"✅ Transaction ajoutée: {cleaned_tx['transaction_id']} - {action_type} - {amount}")
                     
-                    # Garder les 15 plus récentes
-                    self.result['transactions'] = self.transactions[-15:] if len(self.transactions) > 15 else self.transactions
+                    # Trier par timestamp décroissant et garder les 15 plus récentes
+                    self.transactions.sort(key=lambda x: x['timestamp'], reverse=True)
+                    self.result['transactions'] = self.transactions[:15]
                     logger.info(f"📋 {len(self.result['transactions'])} transactions finales")
                 else:
                     logger.warning("⚠️ Pas de clé 'transactions' dans le statement")
