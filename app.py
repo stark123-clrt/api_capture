@@ -366,7 +366,8 @@ def v75_data():
                 'current_price': data.get('current_price', 'N/A')
             },
             'indicators': data.get('indicators', {}),
-            'positions': data.get('positions', [])
+            'positions': data.get('positions', []),
+            'candles': data.get('candles', [])
         }
         
         logger.info("✅ Données récupérées avec succès")
