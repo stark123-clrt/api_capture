@@ -151,8 +151,8 @@ class DerivDataCollector:
                 portfolio_message = {"portfolio": 1}
                 ws.send(json.dumps(portfolio_message))
                 
-                # Récupérer les 15 dernières transactions
-                statement_message = {"statement": 1, "limit": 15}
+                # Récupérer les 50 dernières transactions (pour filtrer ensuite par V75)
+                statement_message = {"statement": 1, "description": 1, "limit": 50}
                 ws.send(json.dumps(statement_message))
                 
             # Données de bougie reçues
@@ -263,67 +263,87 @@ class DerivDataCollector:
                 statement = data['statement']
                 if 'transactions' in statement:
                     transactions = statement['transactions']
-                    
+
                     # Fusionner les transactions par contract_id (chaque transaction a 2 lignes: buy et sell)
                     tx_map = {}
-                    
+
                     for transaction in transactions:
-                        contract_id = transaction.get('identifiant_du_contrat', transaction.get('contract_id'))
-                        
+                        # Utiliser les noms de champs anglais de l'API Deriv
+                        contract_id = transaction.get('contract_id')
+                        shortcode = transaction.get('shortcode', '')
+                        longcode = transaction.get('longcode', '')
+
+                        # Filtrer uniquement les transactions V75 (R_75)
+                        if 'R_75' not in shortcode and 'R_75' not in longcode:
+                            continue
+
+                        if not contract_id:
+                            continue
+
                         if contract_id not in tx_map:
                             tx_map[contract_id] = {
-                                'montant_misé': 0,
-                                'paiement': 0,
-                                'référence': None,
-                                'app_id': transaction.get('app_id')
+                                'amount': 0,
+                                'payout': 0,
+                                'reference': None,
+                                'transaction_time': transaction.get('transaction_time', 0)
                             }
-                        
-                        # Accumuler montant et paiement
-                        montant = transaction.get('montant', 0)
-                        paiement = transaction.get('paiement', 0)
-                        
-                        if montant < 0:
-                            tx_map[contract_id]['montant_misé'] = abs(montant)
-                        if paiement > 0:
-                            tx_map[contract_id]['paiement'] = paiement
-                        
-                        # Garder la référence (première valeur non-null trouvée)
-                        ref = transaction.get('référence')
-                        if ref and ref != 'null' and ref != 'nulle' and ref != 'N/A':
-                            tx_map[contract_id]['référence'] = ref
-                    
-                    # Convertir en liste et calculer profit/status - FILTRER les transactions valides
+
+                        # Accumuler amount et payout
+                        amount = transaction.get('amount', 0)
+
+                        if amount < 0:
+                            # C'est la mise (buy)
+                            tx_map[contract_id]['amount'] = abs(amount)
+                        elif amount > 0:
+                            # C'est le paiement (sell/payout)
+                            tx_map[contract_id]['payout'] = amount
+
+                        # Garder la référence (transaction_id ou reference_id)
+                        ref = transaction.get('transaction_id') or transaction.get('reference_id')
+                        if ref:
+                            tx_map[contract_id]['reference'] = ref
+
+                        # Garder le temps de transaction le plus récent
+                        tx_time = transaction.get('transaction_time', 0)
+                        if tx_time > tx_map[contract_id]['transaction_time']:
+                            tx_map[contract_id]['transaction_time'] = tx_time
+
+                    # Convertir en liste et calculer profit/status
                     for contract_id, tx_data in tx_map.items():
-                        montant_misé = tx_data['montant_misé']
-                        paiement = tx_data['paiement']
-                        référence = tx_data['référence']
-                        
-                        # Ignorer les transactions sans position ou sans référence
-                        if montant_misé == 0 or référence is None:
+                        amount = tx_data['amount']
+                        payout = tx_data['payout']
+                        reference = tx_data['reference']
+
+                        # Ignorer les transactions incomplètes (sans mise)
+                        if amount == 0:
                             continue
-                        
-                        profit = paiement - montant_misé
-                        
+
+                        profit = payout - amount
+
                         # Déterminer le statut
-                        if profit > 0:
+                        if payout == 0:
+                            status = 'open'  # Position encore ouverte
+                        elif profit > 0:
                             status = 'won'
                         elif profit < 0:
                             status = 'lost'
                         else:
                             status = 'neutral'
-                        
+
                         cleaned_tx = {
-                            'référence': référence,
+                            'reference': reference,
                             'contract_id': contract_id,
-                            'position': montant_misé,
-                            'payout': paiement,
+                            'position': amount,
+                            'payout': payout,
                             'profit': round(profit, 2),
-                            'status': status
+                            'status': status,
+                            'transaction_time': tx_data['transaction_time']
                         }
                         self.transactions.append(cleaned_tx)
-                    
-                    # Limiter à 15 transactions max et garder les plus récentes
-                    self.result['transactions'] = self.transactions[-15:] if len(self.transactions) > 15 else self.transactions
+
+                    # Trier par temps de transaction (les plus récentes en premier) et limiter à 15
+                    self.transactions.sort(key=lambda x: x['transaction_time'], reverse=True)
+                    self.result['transactions'] = self.transactions[:15]
                     self.transactions_received = True
                     self.check_completion()
                 
