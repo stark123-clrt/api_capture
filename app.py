@@ -119,9 +119,11 @@ class DerivDataCollector:
         self.lows = []
         self.closes = []
         self.candles = []
+        self.transactions = []
         self.v75_positions = []
         self.positions_detailed = False
         self.candles_received = False
+        self.transactions_received = False
         
     def on_message(self, ws, message):
         """Traite les messages reçus de l'API"""
@@ -148,6 +150,10 @@ class DerivDataCollector:
                 # Récupérer les positions
                 portfolio_message = {"portfolio": 1}
                 ws.send(json.dumps(portfolio_message))
+                
+                # Récupérer les 15 dernières transactions
+                statement_message = {"statement": 1, "limit": 15}
+                ws.send(json.dumps(statement_message))
                 
             # Données de bougie reçues
             elif 'candles' in data:
@@ -251,6 +257,32 @@ class DerivDataCollector:
                 
                 self.positions_detailed = True
                 self.check_completion()
+                    
+            # Historique des transactions
+            elif 'statement' in data:
+                statement = data['statement']
+                if 'transactions' in statement:
+                    transactions = statement['transactions']
+                    
+                    # Extraire et formater les transactions
+                    for transaction in transactions:
+                        tx_data = {
+                            'reference': transaction.get('reference_id', 'N/A'),
+                            'contract_id': transaction.get('contract_id', 'N/A'),
+                            'type': transaction.get('transaction_type', 'N/A'),  # buy, sell, etc.
+                            'amount': transaction.get('amount', 'N/A'),
+                            'profit': transaction.get('profit', 'N/A'),
+                            'payout': transaction.get('payout', 'N/A'),
+                            'status': 'won' if transaction.get('profit', 0) > 0 else 'lost' if transaction.get('profit', 0) < 0 else 'neutral',
+                            'timestamp': transaction.get('buy_time', transaction.get('sell_time', 'N/A')),
+                            'symbol': transaction.get('symbol', 'N/A'),
+                            'app_id': transaction.get('app_id', 'N/A')
+                        }
+                        self.transactions.append(tx_data)
+                    
+                    self.result['transactions'] = self.transactions
+                    self.transactions_received = True
+                    self.check_completion()
                 
         except Exception as e:
             self.result['error'] = str(e)
@@ -279,7 +311,7 @@ class DerivDataCollector:
     
     def check_completion(self):
         """Vérifie si toutes les données sont reçues"""
-        if self.candles_received and self.positions_detailed:
+        if self.candles_received and self.positions_detailed and self.transactions_received:
             self.completed = True
     
     def on_error(self, ws, error):
@@ -367,7 +399,8 @@ def v75_data():
             },
             'indicators': data.get('indicators', {}),
             'positions': data.get('positions', []),
-            'candles': data.get('candles', [])
+            'candles': data.get('candles', []),
+            'transactions': data.get('transactions', [])
         }
         
         logger.info("✅ Données récupérées avec succès")
