@@ -264,23 +264,35 @@ class DerivDataCollector:
                 if 'transactions' in statement:
                     transactions = statement['transactions']
                     
-                    # Extraire et formater les transactions
+                    # Extraire et formater les transactions (noms de champs en français)
                     for transaction in transactions:
+                        # Utiliser les noms de champs français retournés par l'API
+                        montant = transaction.get('montant', transaction.get('amount', 'N/A'))
+                        profit = transaction.get('profit', 'N/A')
+                        
+                        # Déterminer le statut basé sur le profit
+                        if profit != 'N/A' and isinstance(profit, (int, float)):
+                            status = 'won' if profit > 0 else 'lost' if profit < 0 else 'neutral'
+                        else:
+                            status = transaction.get('statut', 'neutre')
+                        
                         tx_data = {
-                            'reference': transaction.get('reference_id', 'N/A'),
+                            'reference': transaction.get('référence', transaction.get('reference_id', 'N/A')),
                             'contract_id': transaction.get('contract_id', 'N/A'),
-                            'type': transaction.get('transaction_type', 'N/A'),  # buy, sell, etc.
-                            'amount': transaction.get('amount', 'N/A'),
-                            'profit': transaction.get('profit', 'N/A'),
-                            'payout': transaction.get('payout', 'N/A'),
-                            'status': 'won' if transaction.get('profit', 0) > 0 else 'lost' if transaction.get('profit', 0) < 0 else 'neutral',
-                            'timestamp': transaction.get('buy_time', transaction.get('sell_time', 'N/A')),
-                            'symbol': transaction.get('symbol', 'N/A'),
+                            'type': transaction.get('taper', transaction.get('transaction_type', 'N/A')),
+                            'amount': montant,
+                            'profit': profit,
+                            'payout': transaction.get('paiement', transaction.get('payout', 'N/A')),
+                            'status': status,
+                            'timestamp': transaction.get('horodatage', transaction.get('buy_time', transaction.get('sell_time', 'N/A'))),
+                            'symbol': transaction.get('symbole', transaction.get('symbol', 'N/A')),
                             'app_id': transaction.get('app_id', 'N/A')
                         }
+                        # Garder toutes les transactions (le filtrage V75 peut se faire côté client)
                         self.transactions.append(tx_data)
                     
-                    self.result['transactions'] = self.transactions
+                    # Limiter à 15 transactions max et garder les plus récentes
+                    self.result['transactions'] = self.transactions[-15:] if len(self.transactions) > 15 else self.transactions
                     self.transactions_received = True
                     self.check_completion()
                 
