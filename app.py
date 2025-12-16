@@ -144,7 +144,7 @@ class DerivDataCollector:
                     "adjust_start_time": 1,
                     "count": 50,
                     "end": "latest",
-                    "granularity": 300,  # 5 minutes
+                    "granularity": 1800,  # 30 minutes
                     "style": "candles"
                 }
                 ws.send(json.dumps(candles_message))
