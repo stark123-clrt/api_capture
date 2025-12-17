@@ -401,18 +401,11 @@ class DerivDataCollector:
         thread.daemon = True
         thread.start()
         
-        # Attendre que la collecte soit terminée
-        timeout = 25
-        start_time = time.time()
-        
-        while not self.completed and (time.time() - start_time) < timeout:
+        # Attendre que la collecte soit terminée (sans timeout)
+        while not self.completed:
             time.sleep(0.5)
         
         ws.close()
-        
-        if not self.completed:
-            self.result['error'] = 'Timeout - données incomplètes'
-            logger.warning(f"⚠️ Timeout! candles={self.candles_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
         
         return self.result
 
