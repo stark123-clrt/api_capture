@@ -613,7 +613,7 @@ def close_position():
         if not data or not isinstance(data, list) or not all('sell' in d and 'contract_id' in d for d in data):
             return jsonify({'success': False, 'error': 'Format de requête invalide. Attendu: [{"sell":..., "contract_id":...}]'}), 400
 
-        API_TOKEN = "I60D02q1qCKbEdc"
+        API_TOKEN = "oEtU0YZqPdcUcfR"
         contract_id = data[0]['contract_id']
         sell_price = data[0]['sell']
 
