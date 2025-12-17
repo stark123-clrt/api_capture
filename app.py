@@ -132,31 +132,34 @@ class DerivDataCollector:
             logger.info(f"📨 Message reçu: {list(data.keys())}")
             
             # Authentification réussie
-            if 'authorize' in data and data['authorize']:
-                auth_data = data['authorize']
-                self.result['balance'] = auth_data.get('balance', 'N/A')
-                self.result['currency'] = auth_data.get('currency', '')
-                logger.info(f"✅ Authentifié - Balance: {self.result['balance']}")
-                
-                # Récupérer les bougies V75
-                candles_message = {
-                    "ticks_history": "R_75",
-                    "adjust_start_time": 1,
-                    "count": 50,
-                    "end": "latest",
-                    "granularity": 1800,  # 30 minutes
-                    "style": "candles"
-                }
-                ws.send(json.dumps(candles_message))
-                
-                # Récupérer les positions
-                portfolio_message = {"portfolio": 1}
-                ws.send(json.dumps(portfolio_message))
-                
-                # Récupérer les 50 dernières transactions
-                statement_message = {"statement": 1, "description": 1, "limit": 50}
-                ws.send(json.dumps(statement_message))
-                
+            if 'authorize' in data:
+                if data['authorize']:
+                    auth_data = data['authorize']
+                    self.result['balance'] = auth_data.get('balance', 'N/A')
+                    self.result['currency'] = auth_data.get('currency', '')
+                    logger.info(f"✅ Authentifié - Balance: {self.result['balance']} {self.result['currency']}")
+                    
+                    # Récupérer les bougies V75
+                    candles_message = {
+                        "ticks_history": "R_75",
+                        "adjust_start_time": 1,
+                        "count": 50,
+                        "end": "latest",
+                        "granularity": 1800,  # 30 minutes
+                        "style": "candles"
+                    }
+                    ws.send(json.dumps(candles_message))
+                    
+                    # Récupérer les positions
+                    portfolio_message = {"portfolio": 1}
+                    ws.send(json.dumps(portfolio_message))
+                    
+                    # Récupérer les 50 dernières transactions
+                    statement_message = {"statement": 1, "description": 1, "limit": 50}
+                    ws.send(json.dumps(statement_message))
+                else:
+                    logger.error(f"❌ Authentification échouée: {data.get('authorize')}")
+                    
             # Données de bougie reçues
             elif 'candles' in data:
                 candles = data['candles']
@@ -383,6 +386,7 @@ class DerivDataCollector:
         logger.info("🔌 WebSocket ouvert, envoi de l'authentification...")
         # S'authentifier
         auth_message = {"authorize": self.api_token}
+        logger.info(f"🔐 Token utilisé: {self.api_token}")
         ws.send(json.dumps(auth_message))
     
     def collect_data(self):
@@ -414,7 +418,7 @@ class DerivDataCollector:
 
 def get_v75_data():
     """Fonction pour récupérer les données V75"""
-    API_TOKEN = "8e7IgEIxBODPR6a"
+    API_TOKEN = "I60D02q1qCKbEdc"
     
     try:
         collector = DerivDataCollector(API_TOKEN)
@@ -519,7 +523,7 @@ def open_position():
             if param not in parameters:
                 return jsonify({'success': False, 'error': f'Paramètre "{param}" manquant'}), 400
         
-        API_TOKEN = "8e7IgEIxBODPR6a"
+        API_TOKEN = "I60D02q1qCKbEdc"
         
         # Fonction pour envoyer l'ordre via WebSocket
         def send_buy_order():
@@ -609,7 +613,7 @@ def close_position():
         if not data or not isinstance(data, list) or not all('sell' in d and 'contract_id' in d for d in data):
             return jsonify({'success': False, 'error': 'Format de requête invalide. Attendu: [{"sell":..., "contract_id":...}]'}), 400
 
-        API_TOKEN = "8e7IgEIxBODPR6a"
+        API_TOKEN = "I60D02q1qCKbEdc"
         contract_id = data[0]['contract_id']
         sell_price = data[0]['sell']
 
