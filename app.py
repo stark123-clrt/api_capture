@@ -401,8 +401,11 @@ class DerivDataCollector:
         thread.daemon = True
         thread.start()
         
-        # Attendre que la collecte soit terminée (sans timeout)
-        while not self.completed:
+        # Attendre que la collecte soit terminée (compte réel = plus lent)
+        timeout = 45
+        start_time = time.time()
+        
+        while not self.completed and (time.time() - start_time) < timeout:
             time.sleep(0.5)
         
         ws.close()
