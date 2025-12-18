@@ -418,7 +418,7 @@ class DerivDataCollector:
 
 def get_v75_data():
     """Fonction pour récupérer les données V75"""
-    API_TOKEN = "I60D02q1qCKbEdc"
+    API_TOKEN = "oEtU0YZqPdcUcfR"
     
     try:
         collector = DerivDataCollector(API_TOKEN)
@@ -523,7 +523,7 @@ def open_position():
             if param not in parameters:
                 return jsonify({'success': False, 'error': f'Paramètre "{param}" manquant'}), 400
         
-        API_TOKEN = "I60D02q1qCKbEdc"
+        API_TOKEN = "oEtU0YZqPdcUcfR"
         
         # Fonction pour envoyer l'ordre via WebSocket
         def send_buy_order():
