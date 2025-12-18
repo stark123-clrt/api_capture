@@ -143,7 +143,7 @@ class DerivDataCollector:
                     candles_message = {
                         "ticks_history": "R_75",
                         "adjust_start_time": 1,
-                        "count": 40,
+                        "count": 50,
                         "end": "latest",
                         "granularity": 1800,  # 30 minutes
                         "style": "candles"
@@ -178,7 +178,7 @@ class DerivDataCollector:
                             'low': candle.get('low'),
                             'close': candle.get('close')
                         })
-                # Conserver les 40 dernières bougies reçues (ordre API)
+                # Conserver les 50 dernières bougies reçues (ordre API)
                 self.candles = parsed_candles
                 
                 # Calculer les indicateurs
@@ -418,7 +418,7 @@ class DerivDataCollector:
 
 def get_v75_data():
     """Fonction pour récupérer les données V75"""
-    API_TOKEN = "oEtU0YZqPdcUcfR"
+    API_TOKEN = "I60D02q1qCKbEdc"
     
     try:
         collector = DerivDataCollector(API_TOKEN)
@@ -523,7 +523,7 @@ def open_position():
             if param not in parameters:
                 return jsonify({'success': False, 'error': f'Paramètre "{param}" manquant'}), 400
         
-        API_TOKEN = "oEtU0YZqPdcUcfR"
+        API_TOKEN = "HDbJGgiSHifX5NE"
         
         # Fonction pour envoyer l'ordre via WebSocket
         def send_buy_order():
