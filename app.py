@@ -114,15 +114,24 @@ class DerivDataCollector:
         self.result = {}
         self.completed = False
         
-        # Stockage des données
-        self.highs = []
-        self.lows = []
-        self.closes = []
-        self.candles = []
+        # Stockage des données - 5 minutes
+        self.highs_5min = []
+        self.lows_5min = []
+        self.closes_5min = []
+        self.candles_5min = []
+        
+        # Stockage des données - 30 minutes
+        self.highs_30min = []
+        self.lows_30min = []
+        self.closes_30min = []
+        self.candles_30min = []
+        
+        # Autres données
         self.transactions = []
         self.v75_positions = []
         self.positions_detailed = False
-        self.candles_received = False
+        self.candles_5min_received = False
+        self.candles_30min_received = False
         self.transactions_received = False
         
     def on_message(self, ws, message):
@@ -139,16 +148,27 @@ class DerivDataCollector:
                     self.result['currency'] = auth_data.get('currency', '')
                     logger.info(f"✅ Authentifié - Balance: {self.result['balance']} {self.result['currency']}")
                     
-                    # Récupérer les bougies V75
-                    candles_message = {
+                    # Récupérer les bougies 5 minutes (40 bougies)
+                    candles_5min_message = {
                         "ticks_history": "R_75",
                         "adjust_start_time": 1,
                         "count": 40,
                         "end": "latest",
+                        "granularity": 300,  # 5 minutes
+                        "style": "candles"
+                    }
+                    ws.send(json.dumps(candles_5min_message))
+                    
+                    # Récupérer les bougies 30 minutes (30 bougies)
+                    candles_30min_message = {
+                        "ticks_history": "R_75",
+                        "adjust_start_time": 1,
+                        "count": 30,
+                        "end": "latest",
                         "granularity": 1800,  # 30 minutes
                         "style": "candles"
                     }
-                    ws.send(json.dumps(candles_message))
+                    ws.send(json.dumps(candles_30min_message))
                     
                     # Récupérer les positions
                     portfolio_message = {"portfolio": 1}
@@ -163,49 +183,89 @@ class DerivDataCollector:
             # Données de bougie reçues
             elif 'candles' in data:
                 candles = data['candles']
-                parsed_candles = []
                 
-                # Extraire les données (format dictionnaire)
-                for candle in candles:
-                    if isinstance(candle, dict):
-                        self.highs.append(candle['high'])
-                        self.lows.append(candle['low'])
-                        self.closes.append(candle['close'])
-                        parsed_candles.append({
-                            'epoch': candle.get('epoch'),
-                            'open': candle.get('open'),
-                            'high': candle.get('high'),
-                            'low': candle.get('low'),
-                            'close': candle.get('close')
-                        })
-                # Conserver les 40 dernières bougies reçues (ordre API)
-                self.candles = parsed_candles
+                # Déterminer le timeframe en regardant la granularité dans echo_req
+                granularity = data.get('echo_req', {}).get('granularity', 0)
                 
-                # Calculer les indicateurs
-                if len(self.closes) > 0:
-                    current_price = self.closes[-1]
-                    self.result['current_price'] = current_price
+                if granularity == 300:  # 5 minutes
+                    parsed_candles_5min = []
+                    for candle in candles:
+                        if isinstance(candle, dict):
+                            self.highs_5min.append(candle['high'])
+                            self.lows_5min.append(candle['low'])
+                            self.closes_5min.append(candle['close'])
+                            parsed_candles_5min.append({
+                                'epoch': candle.get('epoch'),
+                                'open': candle.get('open'),
+                                'high': candle.get('high'),
+                                'low': candle.get('low'),
+                                'close': candle.get('close')
+                            })
+                    self.candles_5min = parsed_candles_5min
                     
-                    # Calcul des indicateurs
-                    rsi = TechnicalIndicators.rsi(self.closes)
-                    stoch_k = TechnicalIndicators.stochastic(self.highs, self.lows, self.closes)
-                    atr = TechnicalIndicators.atr(self.highs, self.lows, self.closes)
-                    bb_upper, bb_middle, bb_lower = TechnicalIndicators.bollinger_bands(self.closes)
-                    ema = TechnicalIndicators.ema(self.closes)
+                    # Calculer les indicateurs 5 minutes
+                    if len(self.closes_5min) > 0:
+                        rsi_5min = TechnicalIndicators.rsi(self.closes_5min)
+                        stoch_k_5min = TechnicalIndicators.stochastic(self.highs_5min, self.lows_5min, self.closes_5min)
+                        atr_5min = TechnicalIndicators.atr(self.highs_5min, self.lows_5min, self.closes_5min)
+                        bb_upper_5min, bb_middle_5min, bb_lower_5min = TechnicalIndicators.bollinger_bands(self.closes_5min)
+                        ema_5min = TechnicalIndicators.ema(self.closes_5min)
+                        
+                        self.result['indicators_5min'] = {
+                            'rsi': rsi_5min,
+                            'stochastic_k': stoch_k_5min,
+                            'atr': atr_5min,
+                            'bollinger_upper': bb_upper_5min,
+                            'bollinger_middle': bb_middle_5min,
+                            'bollinger_lower': bb_lower_5min,
+                            'ema': ema_5min
+                        }
+                        self.result['bougies_5min'] = self.candles_5min
                     
-                    self.result['indicators'] = {
-                        'rsi': rsi,
-                        'stochastic_k': stoch_k,
-                        'atr': atr,
-                        'bollinger_upper': bb_upper,
-                        'bollinger_middle': bb_middle,
-                        'bollinger_lower': bb_lower,
-                        'ema': ema
-                    }
-                    self.result['candles'] = self.candles
+                    logger.info(f"📊 {len(self.candles_5min)} bougies 5min reçues")
+                    self.candles_5min_received = True
+                    
+                elif granularity == 1800:  # 30 minutes
+                    parsed_candles_30min = []
+                    for candle in candles:
+                        if isinstance(candle, dict):
+                            self.highs_30min.append(candle['high'])
+                            self.lows_30min.append(candle['low'])
+                            self.closes_30min.append(candle['close'])
+                            parsed_candles_30min.append({
+                                'epoch': candle.get('epoch'),
+                                'open': candle.get('open'),
+                                'high': candle.get('high'),
+                                'low': candle.get('low'),
+                                'close': candle.get('close')
+                            })
+                    self.candles_30min = parsed_candles_30min
+                    
+                    # Calculer les indicateurs 30 minutes
+                    if len(self.closes_30min) > 0:
+                        current_price = self.closes_30min[-1]
+                        self.result['current_price'] = current_price
+                        
+                        rsi_30min = TechnicalIndicators.rsi(self.closes_30min)
+                        stoch_k_30min = TechnicalIndicators.stochastic(self.highs_30min, self.lows_30min, self.closes_30min)
+                        atr_30min = TechnicalIndicators.atr(self.highs_30min, self.lows_30min, self.closes_30min)
+                        bb_upper_30min, bb_middle_30min, bb_lower_30min = TechnicalIndicators.bollinger_bands(self.closes_30min)
+                        ema_30min = TechnicalIndicators.ema(self.closes_30min)
+                        
+                        self.result['indicators_30min'] = {
+                            'rsi': rsi_30min,
+                            'stochastic_k': stoch_k_30min,
+                            'atr': atr_30min,
+                            'bollinger_upper': bb_upper_30min,
+                            'bollinger_middle': bb_middle_30min,
+                            'bollinger_lower': bb_lower_30min,
+                            'ema': ema_30min
+                        }
+                        self.result['bougies_30min'] = self.candles_30min
+                    
+                    logger.info(f"📊 {len(self.candles_30min)} bougies 30min reçues")
+                    self.candles_30min_received = True
                 
-                logger.info(f"📊 {len(self.candles)} bougies reçues")
-                self.candles_received = True
                 self.check_completion()
                 
             # Positions ouvertes
@@ -368,9 +428,9 @@ class DerivDataCollector:
     
     def check_completion(self):
         """Vérifie si toutes les données essentielles sont reçues (transactions optionnelles)"""
-        logger.info(f"🔄 Check: candles={self.candles_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
-        # Les transactions sont optionnelles - on attend juste les bougies et positions
-        if self.candles_received and self.positions_detailed:
+        logger.info(f"🔄 Check: candles_5min={self.candles_5min_received}, candles_30min={self.candles_30min_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
+        # Les transactions sont optionnelles - on attend les deux timeframes de bougies et les positions
+        if self.candles_5min_received and self.candles_30min_received and self.positions_detailed:
             logger.info("✅ Données essentielles reçues!")
             self.completed = True
     
@@ -458,9 +518,11 @@ def v75_data():
                 'symbol': 'V75',
                 'current_price': data.get('current_price', 'N/A')
             },
-            'indicators': data.get('indicators', {}),
+            'bougies_5min': data.get('bougies_5min', []),
+            'indicators_5min': data.get('indicators_5min', {}),
+            'bougies_30min': data.get('bougies_30min', []),
+            'indicators_30min': data.get('indicators_30min', {}),
             'positions': data.get('positions', []),
-            'candles': data.get('candles', []),
             'transactions': data.get('transactions', [])
         }
         
