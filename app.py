@@ -321,9 +321,9 @@ class DerivDataCollector:
                             }
                             self.transactions.append(cleaned_tx)
                     
-                    # Trier par timestamp décroissant et garder les 10 plus récentes
+                    # Trier par timestamp décroissant et garder les 15 plus récentes
                     self.transactions.sort(key=lambda x: x['timestamp'], reverse=True)
-                    self.result['transactions'] = self.transactions[:10]
+                    self.result['transactions'] = self.transactions[:15]
                     logger.info(f"📋 {len(self.result['transactions'])} transactions finales")
                 else:
                     logger.warning("⚠️ Pas de clé 'transactions' dans le statement")
