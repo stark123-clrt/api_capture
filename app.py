@@ -113,6 +113,7 @@ class DerivDataCollector:
         self.api_token = api_token
         self.result = {}
         self.completed = False
+        self.last_message_time = time.time()  # Pour attendre 2s après dernier message
         
         # Stockage des données - 5 minutes
         self.highs_5min = []
@@ -138,6 +139,7 @@ class DerivDataCollector:
         """Traite les messages reçus de l'API"""
         try:
             data = json.loads(message)
+            self.last_message_time = time.time()  # Mettre à jour le timestamp
             logger.info(f"📨 Message reçu: {list(data.keys())}")
             
             # Authentification réussie
@@ -431,8 +433,12 @@ class DerivDataCollector:
         logger.info(f"🔄 Check: candles_5min={self.candles_5min_received}, candles_30min={self.candles_30min_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
         # Les transactions sont optionnelles - on attend les deux timeframes de bougies et les positions
         if self.candles_5min_received and self.candles_30min_received and self.positions_detailed:
-            logger.info("✅ Données essentielles reçues!")
-            self.completed = True
+            # Attendre 2 secondes après le dernier message pour être sûr que tout est arrivé
+            if (time.time() - self.last_message_time) >= 2.0:
+                logger.info("✅ Données essentielles reçues (après délai de 2s)!")
+                self.completed = True
+            else:
+                logger.info(f"⏳ En attente de 2s après dernier message (reste {2.0 - (time.time() - self.last_message_time):.1f}s)")
     
     def on_error(self, ws, error):
         logger.error(f"❌ WebSocket Error: {str(error)}")
@@ -465,12 +471,15 @@ class DerivDataCollector:
         thread.daemon = True
         thread.start()
         
-        # Attendre que la collecte soit terminée (compte réel = plus lent)
-        timeout = 45
+        # Attendre que la collecte soit terminée (compte réel = plus lent, 2 timeframes)
+        timeout = 90
         start_time = time.time()
         
         while not self.completed and (time.time() - start_time) < timeout:
             time.sleep(0.5)
+            # Re-vérifier completion régulièrement pour le délai de 2s
+            if self.candles_5min_received and self.candles_30min_received and self.positions_detailed:
+                self.check_completion()
         
         ws.close()
         
