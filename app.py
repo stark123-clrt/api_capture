@@ -18,7 +18,11 @@ app = Flask(__name__)
 class TechnicalIndicators:
     @staticmethod
     def rsi(prices, period=14):
-        """Calcul du RSI (Relative Strength Index)"""
+        """
+        Calcul du RSI avec Wilder's Smoothing (moyenne lissée)
+        Formule: RSI = 100 - (100 / (1 + RS))
+        où RS = Avg Gain / Avg Loss avec lissage exponentiel
+        """
         if len(prices) < period + 1:
             return None
         
@@ -26,8 +30,15 @@ class TechnicalIndicators:
         gains = np.where(deltas > 0, deltas, 0)
         losses = np.where(deltas < 0, -deltas, 0)
         
+        # Première moyenne (SMA) pour initialiser
         avg_gain = np.mean(gains[:period])
         avg_loss = np.mean(losses[:period])
+        
+        # Appliquer Wilder's Smoothing sur le reste des données
+        # Formule: Avg = ((Avg_prev * (period - 1)) + current_value) / period
+        for i in range(period, len(gains)):
+            avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
+            avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
         
         if avg_loss == 0:
             return 100
@@ -58,10 +69,15 @@ class TechnicalIndicators:
     
     @staticmethod
     def atr(highs, lows, closes, period=14):
-        """Calcul de l'ATR (Average True Range)"""
+        """
+        Calcul de l'ATR avec Wilder's Smoothing
+        Formule: ATR_t = ((ATR_prev * (n-1)) + TR_t) / n
+        Critique pour la gestion du risque sur V75
+        """
         if len(closes) < 2:
             return None
         
+        # Calculer tous les True Ranges
         true_ranges = []
         for i in range(1, len(closes)):
             high_low = highs[i] - lows[i]
@@ -71,9 +87,16 @@ class TechnicalIndicators:
             true_ranges.append(true_range)
         
         if len(true_ranges) < period:
-            atr_value = np.mean(true_ranges)
-        else:
-            atr_value = np.mean(true_ranges[-period:])
+            # Pas assez de données, retourner moyenne simple
+            return round(np.mean(true_ranges), 2)
+        
+        # Première ATR = SMA des premiers True Ranges
+        atr_value = np.mean(true_ranges[:period])
+        
+        # Appliquer Wilder's Smoothing sur le reste
+        # Formule: ATR_t = ((ATR_prev * (period - 1)) + TR_t) / period
+        for i in range(period, len(true_ranges)):
+            atr_value = ((atr_value * (period - 1)) + true_ranges[i]) / period
         
         return round(atr_value, 2)
     
@@ -94,15 +117,23 @@ class TechnicalIndicators:
     
     @staticmethod
     def ema(prices, period=20):
-        """Calcul de l'EMA (Exponential Moving Average)"""
+        """
+        Calcul de l'EMA avec initialisation correcte
+        Utilise le premier prix comme point de départ pour plus de stabilité
+        sur les actifs volatils comme V75
+        """
         if len(prices) < period:
             return None
         
-        multiplier = 2 / (period + 1)
+        # Multiplicateur de lissage (alpha)
+        alpha = 2 / (period + 1)
+        
+        # Initialisation: utiliser la SMA des premiers prix pour plus de stabilité
         ema = np.mean(prices[:period])
         
+        # Appliquer la formule EMA sur TOUS les prix après la période initiale
         for price in prices[period:]:
-            ema = (price * multiplier) + (ema * (1 - multiplier))
+            ema = (price * alpha) + (ema * (1 - alpha))
         
         return round(ema, 2)
 
