@@ -418,7 +418,7 @@ class DerivDataCollector:
 
 def get_v75_data():
     """Fonction pour récupérer les données V75"""
-    API_TOKEN = "I60D02q1qCKbEdc"
+    API_TOKEN = "DvXO5nDy5KFG3vW"
     
     try:
         collector = DerivDataCollector(API_TOKEN)
@@ -523,7 +523,7 @@ def open_position():
             if param not in parameters:
                 return jsonify({'success': False, 'error': f'Paramètre "{param}" manquant'}), 400
         
-        API_TOKEN = "HDbJGgiSHifX5NE"
+        API_TOKEN = "DvXO5nDy5KFG3vW"
         
         # Fonction pour envoyer l'ordre via WebSocket
         def send_buy_order():
@@ -613,7 +613,7 @@ def close_position():
         if not data or not isinstance(data, list) or not all('sell' in d and 'contract_id' in d for d in data):
             return jsonify({'success': False, 'error': 'Format de requête invalide. Attendu: [{"sell":..., "contract_id":...}]'}), 400
 
-        API_TOKEN = "oEtU0YZqPdcUcfR"
+        API_TOKEN = "DvXO5nDy5KFG3vW"
         contract_id = data[0]['contract_id']
         sell_price = data[0]['sell']
 
