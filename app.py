@@ -1,17 +1,19 @@
 from flask import Flask, jsonify, request
-import asyncio
 import websocket
 import json
 import threading
 import time
 import numpy as np
 import logging
+import os
+from functools import wraps
 
 # Configuration du logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
 
 class TechnicalIndicators:
     @staticmethod
@@ -96,24 +98,30 @@ class TechnicalIndicators:
         if len(prices) < period:
             return None
         
-        # Multiplicateur de lissage
         multiplier = 2 / (period + 1)
-        
-        # EMA simple au départ = SMA
         ema = np.mean(prices[:period])
         
-        # Appliquer la formule EMA sur le reste des données
         for price in prices[period:]:
             ema = (price * multiplier) + (ema * (1 - multiplier))
         
         return round(ema, 2)
+
 
 class DerivDataCollector:
     def __init__(self, api_token):
         self.api_token = api_token
         self.result = {}
         self.completed = False
-        self.last_message_time = time.time()  # Pour attendre 2s après dernier message
+        self.error_occurred = False
+        self.ws = None
+        self.lock = threading.Lock()
+        
+        # Flags de réception avec lock pour thread-safety
+        self._candles_5min_received = False
+        self._candles_30min_received = False
+        self._positions_received = False
+        self._transactions_received = False
+        self._auth_received = False
         
         # Stockage des données - 5 minutes
         self.highs_5min = []
@@ -130,360 +138,450 @@ class DerivDataCollector:
         # Autres données
         self.transactions = []
         self.v75_positions = []
-        self.positions_detailed = False
-        self.candles_5min_received = False
-        self.candles_30min_received = False
-        self.transactions_received = False
+        self.pending_position_details = 0
+        
+        # Compteurs pour retry
+        self.retry_count = 0
+        self.max_retries = 3
         
     def on_message(self, ws, message):
         """Traite les messages reçus de l'API"""
         try:
             data = json.loads(message)
-            self.last_message_time = time.time()  # Mettre à jour le timestamp
-            logger.info(f"📨 Message reçu: {list(data.keys())}")
+            msg_type = list(data.keys())[0] if data else 'unknown'
+            logger.info(f"📨 Message reçu: {msg_type}")
+            
+            # Gestion des erreurs API
+            if 'error' in data:
+                error = data['error']
+                error_code = error.get('code', 'unknown')
+                error_msg = error.get('message', 'Unknown error')
+                logger.error(f"❌ Erreur API [{error_code}]: {error_msg}")
+                
+                # Si erreur d'auth, on ne peut rien faire
+                if error_code in ['InvalidToken', 'AuthorizationRequired']:
+                    self.result['error'] = error_msg
+                    self.error_occurred = True
+                    self.completed = True
+                return
             
             # Authentification réussie
             if 'authorize' in data:
-                if data['authorize']:
-                    auth_data = data['authorize']
-                    self.result['balance'] = auth_data.get('balance', 'N/A')
-                    self.result['currency'] = auth_data.get('currency', '')
-                    logger.info(f"✅ Authentifié - Balance: {self.result['balance']} {self.result['currency']}")
-                    
-                    # Récupérer les bougies 5 minutes (40 bougies)
-                    candles_5min_message = {
-                        "ticks_history": "R_75",
-                        "adjust_start_time": 1,
-                        "count": 40,
-                        "end": "latest",
-                        "granularity": 300,  # 5 minutes
-                        "style": "candles"
-                    }
-                    ws.send(json.dumps(candles_5min_message))
-                    
-                    # Récupérer les bougies 30 minutes (30 bougies)
-                    candles_30min_message = {
-                        "ticks_history": "R_75",
-                        "adjust_start_time": 1,
-                        "count": 30,
-                        "end": "latest",
-                        "granularity": 1800,  # 30 minutes
-                        "style": "candles"
-                    }
-                    ws.send(json.dumps(candles_30min_message))
-                    
-                    # Récupérer les positions
-                    portfolio_message = {"portfolio": 1}
-                    ws.send(json.dumps(portfolio_message))
-                    
-                    # Récupérer les 50 dernières transactions
-                    statement_message = {"statement": 1, "description": 1, "limit": 50}
-                    ws.send(json.dumps(statement_message))
-                else:
-                    logger.error(f"❌ Authentification échouée: {data.get('authorize')}")
+                self._handle_authorize(ws, data)
                     
             # Données de bougie reçues
             elif 'candles' in data:
-                candles = data['candles']
-                
-                # Déterminer le timeframe en regardant la granularité dans echo_req
-                granularity = data.get('echo_req', {}).get('granularity', 0)
-                
-                if granularity == 300:  # 5 minutes
-                    parsed_candles_5min = []
-                    for candle in candles:
-                        if isinstance(candle, dict):
-                            self.highs_5min.append(candle['high'])
-                            self.lows_5min.append(candle['low'])
-                            self.closes_5min.append(candle['close'])
-                            parsed_candles_5min.append({
-                                'epoch': candle.get('epoch'),
-                                'open': candle.get('open'),
-                                'high': candle.get('high'),
-                                'low': candle.get('low'),
-                                'close': candle.get('close')
-                            })
-                    self.candles_5min = parsed_candles_5min
-                    
-                    # Calculer les indicateurs 5 minutes
-                    if len(self.closes_5min) > 0:
-                        rsi_5min = TechnicalIndicators.rsi(self.closes_5min)
-                        stoch_k_5min = TechnicalIndicators.stochastic(self.highs_5min, self.lows_5min, self.closes_5min)
-                        atr_5min = TechnicalIndicators.atr(self.highs_5min, self.lows_5min, self.closes_5min)
-                        bb_upper_5min, bb_middle_5min, bb_lower_5min = TechnicalIndicators.bollinger_bands(self.closes_5min)
-                        ema_5min = TechnicalIndicators.ema(self.closes_5min)
-                        
-                        self.result['indicators_5min'] = {
-                            'rsi': rsi_5min,
-                            'stochastic_k': stoch_k_5min,
-                            'atr': atr_5min,
-                            'bollinger_upper': bb_upper_5min,
-                            'bollinger_middle': bb_middle_5min,
-                            'bollinger_lower': bb_lower_5min,
-                            'ema': ema_5min
-                        }
-                        self.result['bougies_5min'] = self.candles_5min
-                    
-                    logger.info(f"📊 {len(self.candles_5min)} bougies 5min reçues")
-                    self.candles_5min_received = True
-                    
-                elif granularity == 1800:  # 30 minutes
-                    parsed_candles_30min = []
-                    for candle in candles:
-                        if isinstance(candle, dict):
-                            self.highs_30min.append(candle['high'])
-                            self.lows_30min.append(candle['low'])
-                            self.closes_30min.append(candle['close'])
-                            parsed_candles_30min.append({
-                                'epoch': candle.get('epoch'),
-                                'open': candle.get('open'),
-                                'high': candle.get('high'),
-                                'low': candle.get('low'),
-                                'close': candle.get('close')
-                            })
-                    self.candles_30min = parsed_candles_30min
-                    
-                    # Calculer les indicateurs 30 minutes
-                    if len(self.closes_30min) > 0:
-                        current_price = self.closes_30min[-1]
-                        self.result['current_price'] = current_price
-                        
-                        rsi_30min = TechnicalIndicators.rsi(self.closes_30min)
-                        stoch_k_30min = TechnicalIndicators.stochastic(self.highs_30min, self.lows_30min, self.closes_30min)
-                        atr_30min = TechnicalIndicators.atr(self.highs_30min, self.lows_30min, self.closes_30min)
-                        bb_upper_30min, bb_middle_30min, bb_lower_30min = TechnicalIndicators.bollinger_bands(self.closes_30min)
-                        ema_30min = TechnicalIndicators.ema(self.closes_30min)
-                        
-                        self.result['indicators_30min'] = {
-                            'rsi': rsi_30min,
-                            'stochastic_k': stoch_k_30min,
-                            'atr': atr_30min,
-                            'bollinger_upper': bb_upper_30min,
-                            'bollinger_middle': bb_middle_30min,
-                            'bollinger_lower': bb_lower_30min,
-                            'ema': ema_30min
-                        }
-                        self.result['bougies_30min'] = self.candles_30min
-                    
-                    logger.info(f"📊 {len(self.candles_30min)} bougies 30min reçues")
-                    self.candles_30min_received = True
-                
-                self.check_completion()
+                self._handle_candles(data)
                 
             # Positions ouvertes
             elif 'portfolio' in data:
-                portfolio = data['portfolio']
-                if 'contracts' in portfolio:
-                    positions = portfolio['contracts']
-                    self.v75_positions = [p for p in positions if p.get('symbol') == 'R_75']
+                self._handle_portfolio(ws, data)
                     
-                    if self.v75_positions:
-                        # Demander les détails pour chaque position
-                        for pos in self.v75_positions:
-                            contract_id = pos.get('contract_id')
-                            if contract_id:
-                                detail_message = {
-                                    "proposal_open_contract": 1,
-                                    "contract_id": contract_id
-                                }
-                                ws.send(json.dumps(detail_message))
-                    else:
-                        self.result['positions'] = []
-                        self.positions_detailed = True
-                        self.check_completion()
-                else:
-                    self.result['positions'] = []
-                    self.positions_detailed = True
-                    self.check_completion()
-                    
-            # Détails des positions (avec pourcentage exact)
+            # Détails des positions
             elif 'proposal_open_contract' in data:
-                details = data['proposal_open_contract']
-                contract_id = details.get('contract_id')
-                
-                # Initialiser positions si pas encore fait
-                if 'positions' not in self.result:
-                    self.result['positions'] = []
-                
-                # Trouver la position correspondante
-                for pos in self.v75_positions:
-                    if pos.get('contract_id') == contract_id:
-                        contract_type = pos.get('contract_type', 'N/A')
-                        
-                        # Traduire le type de contrat
-                        contract_display = self.translate_contract_type(contract_type)
-                        
-                        position_data = {
-                            'contract_id': contract_id,
-                            'contract_type_raw': contract_type,
-                            'contract_type': contract_display,
-                            'buy_price': pos.get('buy_price', 'N/A'),
-                            'profit_percentage': details.get('profit_percentage', 'N/A')
-                        }
-                        self.result['positions'].append(position_data)
-                        break
-                
-                self.positions_detailed = True
-                self.check_completion()
+                self._handle_position_details(data)
                     
-            # Historique des transactions - CORRIGÉ
+            # Historique des transactions
             elif 'statement' in data:
-                statement = data['statement']
-                logger.info(f"📋 Statement reçu")
+                self._handle_statement(data)
                 
-                if 'transactions' in statement:
-                    transactions = statement['transactions']
-                    logger.info(f"📋 {len(transactions)} transactions brutes reçues")
-                    
-                    # On regroupe les transactions par contract_id pour avoir buy + sell ensemble
-                    contracts = {}
-                    
-                    for transaction in transactions:
-                        action_type = transaction.get('action_type', '')
-                        contract_id = transaction.get('contract_id')
-                        
-                        if not contract_id:
-                            continue
-                        
-                        if contract_id not in contracts:
-                            contracts[contract_id] = {'buy': None, 'sell': None}
-                        
-                        if action_type == 'buy':
-                            contracts[contract_id]['buy'] = transaction
-                        elif action_type == 'sell':
-                            contracts[contract_id]['sell'] = transaction
-                    
-                    # Construire les transactions finales
-                    for contract_id, data in contracts.items():
-                        buy_tx = data['buy']
-                        sell_tx = data['sell']
-                        
-                        # On ne garde que les contrats terminés (avec buy ET sell)
-                        if buy_tx and sell_tx:
-                            position = abs(buy_tx.get('amount', 0))
-                            payout = sell_tx.get('amount', 0)
-                            profit = round(payout - position, 2)
-                            
-                            # Déterminer le statut
-                            if profit > 0:
-                                status = 'won'
-                            elif profit < 0:
-                                status = 'lost'
-                            else:
-                                status = 'neutral'
-                            
-                            cleaned_tx = {
-                                'référence': str(sell_tx.get('transaction_id', '')),
-                                'contract_id': str(contract_id),
-                                'position': round(position, 2),
-                                'payout': round(payout, 2),
-                                'profit': profit,
-                                'status': status,
-                                'timestamp': sell_tx.get('timestamp', sell_tx.get('transaction_time', 0))
-                            }
-                            self.transactions.append(cleaned_tx)
-                    
-                    # Trier par timestamp décroissant et garder les 10 plus récentes
-                    self.transactions.sort(key=lambda x: x['timestamp'], reverse=True)
-                    self.result['transactions'] = self.transactions[:10]
-                    logger.info(f"📋 {len(self.result['transactions'])} transactions finales")
-                else:
-                    logger.warning("⚠️ Pas de clé 'transactions' dans le statement")
-                    self.result['transactions'] = []
-                
-                # Marquer comme reçu
-                self.transactions_received = True
-                self.check_completion()
-            
-            # Gestion des erreurs API
-            elif 'error' in data:
-                error = data['error']
-                logger.error(f"❌ Erreur API: {error.get('message', 'Unknown error')}")
-                
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Erreur JSON: {str(e)}")
         except Exception as e:
             logger.error(f"❌ Erreur traitement message: {str(e)}")
             import traceback
             traceback.print_exc()
-            self.result['error'] = str(e)
+    
+    def _handle_authorize(self, ws, data):
+        """Gère la réponse d'authentification"""
+        if data['authorize']:
+            auth_data = data['authorize']
+            with self.lock:
+                self.result['balance'] = auth_data.get('balance', 'N/A')
+                self.result['currency'] = auth_data.get('currency', '')
+                self._auth_received = True
+            
+            logger.info(f"✅ Authentifié - Balance: {self.result['balance']} {self.result['currency']}")
+            
+            # Envoyer toutes les requêtes en parallèle
+            requests = [
+                {"ticks_history": "R_75", "adjust_start_time": 1, "count": 40, "end": "latest", "granularity": 300, "style": "candles", "req_id": 1},
+                {"ticks_history": "R_75", "adjust_start_time": 1, "count": 30, "end": "latest", "granularity": 1800, "style": "candles", "req_id": 2},
+                {"portfolio": 1, "req_id": 3},
+                {"statement": 1, "description": 1, "limit": 50, "req_id": 4}
+            ]
+            
+            for req in requests:
+                try:
+                    ws.send(json.dumps(req))
+                    time.sleep(0.1)  # Petit délai entre les requêtes
+                except Exception as e:
+                    logger.error(f"❌ Erreur envoi requête: {e}")
+        else:
+            logger.error(f"❌ Authentification échouée")
+            self.error_occurred = True
             self.completed = True
     
-    def translate_contract_type(self, contract_type):
-        """Traduit les types de contrats Deriv en français"""
+    def _handle_candles(self, data):
+        """Gère les données de bougies"""
+        candles = data.get('candles', [])
+        granularity = data.get('echo_req', {}).get('granularity', 0)
+        
+        if not candles:
+            logger.warning(f"⚠️ Aucune bougie reçue pour granularité {granularity}")
+            # Marquer comme reçu même si vide pour éviter de bloquer
+            with self.lock:
+                if granularity == 300:
+                    self._candles_5min_received = True
+                elif granularity == 1800:
+                    self._candles_30min_received = True
+            self._check_completion()
+            return
+        
+        with self.lock:
+            if granularity == 300:  # 5 minutes
+                self._process_candles_5min(candles)
+                self._candles_5min_received = True
+                logger.info(f"📊 {len(self.candles_5min)} bougies 5min reçues")
+                
+            elif granularity == 1800:  # 30 minutes
+                self._process_candles_30min(candles)
+                self._candles_30min_received = True
+                logger.info(f"📊 {len(self.candles_30min)} bougies 30min reçues")
+        
+        self._check_completion()
+    
+    def _process_candles_5min(self, candles):
+        """Traite les bougies 5 minutes"""
+        self.highs_5min = []
+        self.lows_5min = []
+        self.closes_5min = []
+        self.candles_5min = []
+        
+        for candle in candles:
+            if isinstance(candle, dict):
+                self.highs_5min.append(candle['high'])
+                self.lows_5min.append(candle['low'])
+                self.closes_5min.append(candle['close'])
+                self.candles_5min.append({
+                    'epoch': candle.get('epoch'),
+                    'open': candle.get('open'),
+                    'high': candle.get('high'),
+                    'low': candle.get('low'),
+                    'close': candle.get('close')
+                })
+        
+        if self.closes_5min:
+            self.result['indicators_5min'] = {
+                'rsi': TechnicalIndicators.rsi(self.closes_5min),
+                'stochastic_k': TechnicalIndicators.stochastic(self.highs_5min, self.lows_5min, self.closes_5min),
+                'atr': TechnicalIndicators.atr(self.highs_5min, self.lows_5min, self.closes_5min),
+                'bollinger_upper': None,
+                'bollinger_middle': None,
+                'bollinger_lower': None,
+                'ema': TechnicalIndicators.ema(self.closes_5min)
+            }
+            bb = TechnicalIndicators.bollinger_bands(self.closes_5min)
+            self.result['indicators_5min']['bollinger_upper'] = bb[0]
+            self.result['indicators_5min']['bollinger_middle'] = bb[1]
+            self.result['indicators_5min']['bollinger_lower'] = bb[2]
+            self.result['bougies_5min'] = self.candles_5min
+    
+    def _process_candles_30min(self, candles):
+        """Traite les bougies 30 minutes"""
+        self.highs_30min = []
+        self.lows_30min = []
+        self.closes_30min = []
+        self.candles_30min = []
+        
+        for candle in candles:
+            if isinstance(candle, dict):
+                self.highs_30min.append(candle['high'])
+                self.lows_30min.append(candle['low'])
+                self.closes_30min.append(candle['close'])
+                self.candles_30min.append({
+                    'epoch': candle.get('epoch'),
+                    'open': candle.get('open'),
+                    'high': candle.get('high'),
+                    'low': candle.get('low'),
+                    'close': candle.get('close')
+                })
+        
+        if self.closes_30min:
+            self.result['current_price'] = self.closes_30min[-1]
+            self.result['indicators_30min'] = {
+                'rsi': TechnicalIndicators.rsi(self.closes_30min),
+                'stochastic_k': TechnicalIndicators.stochastic(self.highs_30min, self.lows_30min, self.closes_30min),
+                'atr': TechnicalIndicators.atr(self.highs_30min, self.lows_30min, self.closes_30min),
+                'bollinger_upper': None,
+                'bollinger_middle': None,
+                'bollinger_lower': None,
+                'ema': TechnicalIndicators.ema(self.closes_30min)
+            }
+            bb = TechnicalIndicators.bollinger_bands(self.closes_30min)
+            self.result['indicators_30min']['bollinger_upper'] = bb[0]
+            self.result['indicators_30min']['bollinger_middle'] = bb[1]
+            self.result['indicators_30min']['bollinger_lower'] = bb[2]
+            self.result['bougies_30min'] = self.candles_30min
+    
+    def _handle_portfolio(self, ws, data):
+        """Gère les positions du portfolio"""
+        portfolio = data.get('portfolio', {})
+        contracts = portfolio.get('contracts', [])
+        
+        with self.lock:
+            self.v75_positions = [p for p in contracts if p.get('symbol') == 'R_75']
+            
+            if not self.v75_positions:
+                self.result['positions'] = []
+                self._positions_received = True
+                logger.info("📋 Aucune position V75 ouverte")
+            else:
+                self.pending_position_details = len(self.v75_positions)
+                self.result['positions'] = []
+                logger.info(f"📋 {len(self.v75_positions)} positions V75 trouvées")
+                
+                # Demander les détails pour chaque position
+                for pos in self.v75_positions:
+                    contract_id = pos.get('contract_id')
+                    if contract_id:
+                        detail_message = {"proposal_open_contract": 1, "contract_id": contract_id}
+                        try:
+                            ws.send(json.dumps(detail_message))
+                            time.sleep(0.05)
+                        except Exception as e:
+                            logger.error(f"❌ Erreur envoi détails position: {e}")
+                            self.pending_position_details -= 1
+        
+        self._check_completion()
+    
+    def _handle_position_details(self, data):
+        """Gère les détails d'une position"""
+        details = data.get('proposal_open_contract', {})
+        contract_id = details.get('contract_id')
+        
+        with self.lock:
+            for pos in self.v75_positions:
+                if pos.get('contract_id') == contract_id:
+                    contract_type = pos.get('contract_type', 'N/A')
+                    position_data = {
+                        'contract_id': contract_id,
+                        'contract_type_raw': contract_type,
+                        'contract_type': self._translate_contract_type(contract_type),
+                        'buy_price': pos.get('buy_price', 'N/A'),
+                        'profit_percentage': details.get('profit_percentage', 'N/A')
+                    }
+                    self.result['positions'].append(position_data)
+                    break
+            
+            self.pending_position_details -= 1
+            if self.pending_position_details <= 0:
+                self._positions_received = True
+                logger.info(f"📋 Détails de {len(self.result['positions'])} positions reçus")
+        
+        self._check_completion()
+    
+    def _handle_statement(self, data):
+        """Gère l'historique des transactions"""
+        statement = data.get('statement', {})
+        transactions = statement.get('transactions', [])
+        
+        logger.info(f"📋 {len(transactions)} transactions brutes reçues")
+        
+        with self.lock:
+            # Regrouper par contract_id
+            contracts = {}
+            for tx in transactions:
+                contract_id = tx.get('contract_id')
+                if not contract_id:
+                    continue
+                
+                if contract_id not in contracts:
+                    contracts[contract_id] = {'buy': None, 'sell': None}
+                
+                action_type = tx.get('action_type', '')
+                if action_type == 'buy':
+                    contracts[contract_id]['buy'] = tx
+                elif action_type == 'sell':
+                    contracts[contract_id]['sell'] = tx
+            
+            # Construire les transactions finales
+            self.transactions = []
+            for contract_id, data in contracts.items():
+                buy_tx = data['buy']
+                sell_tx = data['sell']
+                
+                if buy_tx and sell_tx:
+                    position = abs(buy_tx.get('amount', 0))
+                    payout = sell_tx.get('amount', 0)
+                    profit = round(payout - position, 2)
+                    
+                    status = 'won' if profit > 0 else ('lost' if profit < 0 else 'neutral')
+                    
+                    self.transactions.append({
+                        'référence': str(sell_tx.get('transaction_id', '')),
+                        'contract_id': str(contract_id),
+                        'position': round(position, 2),
+                        'payout': round(payout, 2),
+                        'profit': profit,
+                        'status': status,
+                        'timestamp': sell_tx.get('timestamp', sell_tx.get('transaction_time', 0))
+                    })
+            
+            self.transactions.sort(key=lambda x: x['timestamp'], reverse=True)
+            self.result['transactions'] = self.transactions[:10]
+            self._transactions_received = True
+            
+            logger.info(f"📋 {len(self.result['transactions'])} transactions finales")
+        
+        self._check_completion()
+    
+    def _translate_contract_type(self, contract_type):
+        """Traduit les types de contrats"""
         translations = {
             'MULTUP': '📈 MULT UP (Achat/Hausse)',
             'MULTDOWN': '📉 MULT DOWN (Vente/Baisse)',
             'CALL': '📈 CALL (Achat/Hausse)',
             'PUT': '📉 PUT (Vente/Baisse)',
-            'CALLE': '📈 CALL EUROPÉEN (Achat)',
-            'PUTE': '📉 PUT EUROPÉEN (Vente)',
-            'ONETOUCH': '🎯 ONE TOUCH',
-            'NOTOUCH': '🚫 NO TOUCH',
-            'RANGE': '📊 RANGE',
-            'UPORDOWN': '⚡ UP OR DOWN',
-            'EXPIRYMISS': '❌ EXPIRY MISS',
-            'EXPIRYRANGE': '🎯 EXPIRY RANGE',
-            'DIGITMATCH': '🔢 DIGIT MATCH',
-            'DIGITDIFF': '🔢 DIGIT DIFFER'
         }
-        
         return translations.get(contract_type, f'📋 {contract_type}')
     
-    def check_completion(self):
-        """Vérifie si toutes les données essentielles sont reçues (transactions optionnelles)"""
-        logger.info(f"🔄 Check: candles_5min={self.candles_5min_received}, candles_30min={self.candles_30min_received}, positions={self.positions_detailed}, transactions={self.transactions_received}")
-        # Les transactions sont optionnelles - on attend les deux timeframes de bougies et les positions
-        if self.candles_5min_received and self.candles_30min_received and self.positions_detailed:
-            # Attendre 2 secondes après le dernier message pour être sûr que tout est arrivé
-            if (time.time() - self.last_message_time) >= 2.0:
-                logger.info("✅ Données essentielles reçues (après délai de 2s)!")
+    def _check_completion(self):
+        """Vérifie si toutes les données sont reçues"""
+        with self.lock:
+            status = f"5min={self._candles_5min_received}, 30min={self._candles_30min_received}, pos={self._positions_received}, tx={self._transactions_received}"
+            logger.info(f"🔄 Status: {status}")
+            
+            # On attend au minimum les bougies et les positions
+            if self._candles_5min_received and self._candles_30min_received and self._positions_received:
+                # Transactions sont optionnelles, on attend 1s de plus si pas encore reçues
+                if not self._transactions_received:
+                    logger.info("⏳ En attente des transactions (optionnel)...")
+                    return
+                
+                logger.info("✅ Toutes les données reçues!")
                 self.completed = True
-            else:
-                logger.info(f"⏳ En attente de 2s après dernier message (reste {2.0 - (time.time() - self.last_message_time):.1f}s)")
     
     def on_error(self, ws, error):
         logger.error(f"❌ WebSocket Error: {str(error)}")
-        self.result['error'] = str(error)
-        self.completed = True
+        with self.lock:
+            self.error_occurred = True
+            self.result['error'] = str(error)
     
     def on_close(self, ws, close_status_code, close_msg):
-        logger.info(f"🔌 WebSocket fermé: {close_status_code} - {close_msg}")
+        logger.info(f"🔌 WebSocket fermé: {close_status_code}")
     
     def on_open(self, ws):
-        logger.info("🔌 WebSocket ouvert, envoi de l'authentification...")
-        # S'authentifier
-        auth_message = {"authorize": self.api_token}
-        logger.info(f"🔐 Token utilisé: {self.api_token}")
-        ws.send(json.dumps(auth_message))
+        logger.info("🔌 WebSocket ouvert, authentification...")
+        try:
+            ws.send(json.dumps({"authorize": self.api_token}))
+        except Exception as e:
+            logger.error(f"❌ Erreur envoi auth: {e}")
+            self.error_occurred = True
     
-    def collect_data(self):
-        """Lance la collecte de données"""
-        websocket.enableTrace(False)
-        ws = websocket.WebSocketApp(
-            "wss://ws.derivws.com/websockets/v3?app_id=1089",
-            on_message=self.on_message,
-            on_error=self.on_error,
-            on_close=self.on_close,
-            on_open=self.on_open
-        )
+    def collect_data(self, timeout=60):
+        """Lance la collecte de données avec retry"""
+        for attempt in range(self.max_retries):
+            logger.info(f"🚀 Tentative {attempt + 1}/{self.max_retries}")
+            
+            # Reset pour nouvelle tentative
+            self._reset_state()
+            
+            websocket.enableTrace(False)
+            self.ws = websocket.WebSocketApp(
+                "wss://ws.derivws.com/websockets/v3?app_id=1089",
+                on_message=self.on_message,
+                on_error=self.on_error,
+                on_close=self.on_close,
+                on_open=self.on_open
+            )
+            
+            # Lancer dans un thread
+            thread = threading.Thread(target=self.ws.run_forever, kwargs={'ping_interval': 30, 'ping_timeout': 10})
+            thread.daemon = True
+            thread.start()
+            
+            # Attendre la complétion
+            start_time = time.time()
+            while not self.completed and not self.error_occurred and (time.time() - start_time) < timeout:
+                time.sleep(0.5)
+                
+                # Forcer la complétion si données essentielles reçues après délai
+                elapsed = time.time() - start_time
+                if elapsed > 15:  # Après 15s, vérifier si on a assez
+                    with self.lock:
+                        if self._candles_5min_received and self._candles_30min_received and self._positions_received:
+                            if not self._transactions_received:
+                                logger.info("⚠️ Timeout transactions, on continue sans")
+                                self.result['transactions'] = self.result.get('transactions', [])
+                            self.completed = True
+            
+            # Fermer proprement
+            try:
+                if self.ws:
+                    self.ws.close()
+            except:
+                pass
+            
+            # Vérifier le résultat
+            if self.completed and not self.error_occurred:
+                if self._validate_result():
+                    logger.info("✅ Collecte réussie!")
+                    return self.result
+                else:
+                    logger.warning(f"⚠️ Données incomplètes, retry...")
+            elif self.error_occurred:
+                logger.warning(f"⚠️ Erreur lors de la tentative {attempt + 1}")
+            else:
+                logger.warning(f"⚠️ Timeout lors de la tentative {attempt + 1}")
+            
+            # Attendre avant retry
+            if attempt < self.max_retries - 1:
+                time.sleep(2)
         
-        # Lancer dans un thread
-        thread = threading.Thread(target=ws.run_forever)
-        thread.daemon = True
-        thread.start()
-        
-        # Attendre que la collecte soit terminée (compte réel = plus lent, 2 timeframes)
-        timeout = 90
-        start_time = time.time()
-        
-        while not self.completed and (time.time() - start_time) < timeout:
-            time.sleep(0.5)
-            # Re-vérifier completion régulièrement pour le délai de 2s
-            if self.candles_5min_received and self.candles_30min_received and self.positions_detailed:
-                self.check_completion()
-        
-        ws.close()
+        # Échec après tous les retries
+        if 'error' not in self.result:
+            self.result['error'] = 'Échec après plusieurs tentatives'
         
         return self.result
+    
+    def _reset_state(self):
+        """Réinitialise l'état pour une nouvelle tentative"""
+        with self.lock:
+            self.completed = False
+            self.error_occurred = False
+            self._candles_5min_received = False
+            self._candles_30min_received = False
+            self._positions_received = False
+            self._transactions_received = False
+            self._auth_received = False
+            self.highs_5min = []
+            self.lows_5min = []
+            self.closes_5min = []
+            self.candles_5min = []
+            self.highs_30min = []
+            self.lows_30min = []
+            self.closes_30min = []
+            self.candles_30min = []
+            self.transactions = []
+            self.v75_positions = []
+            self.pending_position_details = 0
+            # Garder balance/currency si déjà reçus
+            if 'error' in self.result:
+                del self.result['error']
+    
+    def _validate_result(self):
+        """Valide que le résultat contient les données essentielles"""
+        required = ['bougies_5min', 'bougies_30min', 'indicators_5min', 'indicators_30min']
+        for key in required:
+            if key not in self.result:
+                return False
+            if key.startswith('bougies_') and not self.result[key]:
+                return False
+            if key.startswith('indicators_') and not self.result[key]:
+                return False
+        return True
+
 
 def get_v75_data():
     """Fonction pour récupérer les données V75"""
@@ -491,21 +589,19 @@ def get_v75_data():
     
     try:
         collector = DerivDataCollector(API_TOKEN)
-        data = collector.collect_data()
+        data = collector.collect_data(timeout=60)
         return data
     except Exception as e:
         logger.error(f"❌ Erreur get_v75_data: {str(e)}")
         return {'error': str(e)}
 
+
 @app.route('/')
 def v75_data():
-    """
-    API endpoint pour récupérer les données V75
-    """
+    """API endpoint pour récupérer les données V75"""
     try:
         logger.info("📊 Récupération des données V75...")
         
-        # Récupérer les données
         data = get_v75_data()
         
         if 'error' in data:
@@ -515,7 +611,6 @@ def v75_data():
                 'error': data['error']
             }), 500
         
-        # Formater la réponse
         response = {
             'success': True,
             'timestamp': time.time(),
@@ -535,60 +630,50 @@ def v75_data():
             'transactions': data.get('transactions', [])
         }
         
-        logger.info(f"✅ Données récupérées - {len(response['transactions'])} transactions")
+        logger.info(f"✅ Données récupérées - {len(response.get('bougies_5min', []))} bougies 5min, {len(response.get('bougies_30min', []))} bougies 30min")
         return jsonify(response)
         
     except Exception as e:
         logger.error(f"❌ Erreur générale: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
+
 
 @app.route('/health')
 def health():
     """Vérifier que le service fonctionne"""
     return jsonify({
         'status': 'active',
-        'service': 'V75 Deriv API',
+        'service': 'V75 Deriv API - Robust Edition',
         'timestamp': time.time()
     })
 
 
 @app.route('/open_position', methods=['POST'])
 def open_position():
-    """
-    Endpoint pour ouvrir une position d'achat (buy).
-    Requiert un JSON avec les champs 'buy' et 'parameters' :
-    - 'buy' : 1 pour acheter,
-    - 'parameters' : dictionnaire avec 'contract_type', 'symbol', 'amount' (montant à miser), 'multiplier', 'stop_loss', 'take_profit'.
-    """
+    """Endpoint pour ouvrir une position"""
     try:
-        # Récupération des données
         data = request.get_json()
-        print(f"Données reçues: {data}")  # Debug
+        logger.info(f"📥 Open position request: {data}")
         
-        # Validation du format de base
         if not data:
             return jsonify({'success': False, 'error': 'Aucune donnée JSON reçue'}), 400
-            
-        # Si les données sont un tableau, prendre le premier élément
+        
         if isinstance(data, list):
             if len(data) == 0:
                 return jsonify({'success': False, 'error': 'Tableau vide reçu'}), 400
             data = data[0]
         
-        # Validation des champs requis
-        if 'buy' not in data:
-            return jsonify({'success': False, 'error': 'Champ "buy" manquant'}), 400
-            
-        if 'parameters' not in data:
-            return jsonify({'success': False, 'error': 'Champ "parameters" manquant'}), 400
+        if 'buy' not in data or 'parameters' not in data:
+            return jsonify({'success': False, 'error': 'Champs "buy" ou "parameters" manquants'}), 400
         
         buy = data['buy']
         parameters = data['parameters']
         
-        # Validation des paramètres requis
         required_params = ['contract_type', 'symbol', 'amount', 'multiplier', 'stop_loss', 'take_profit']
         for param in required_params:
             if param not in parameters:
@@ -596,32 +681,29 @@ def open_position():
         
         API_TOKEN = "DvXO5nDy5KFG3vW"
         
-        # Fonction pour envoyer l'ordre via WebSocket
         def send_buy_order():
             ws = None
             try:
                 ws = websocket.WebSocket()
+                ws.settimeout(30)
                 ws.connect("wss://ws.derivws.com/websockets/v3?app_id=1089")
                 
-                # Autorisation
-                auth_message = {"authorize": API_TOKEN}
-                ws.send(json.dumps(auth_message))
+                ws.send(json.dumps({"authorize": API_TOKEN}))
+                auth_response = json.loads(ws.recv())
                 
-                # Attendre la réponse d'autorisation
-                auth_response = ws.recv()
-                print(f"Réponse d'autorisation: {auth_response}")
+                if 'error' in auth_response:
+                    raise Exception(f"Auth failed: {auth_response['error'].get('message', 'Unknown')}")
                 
-                # Format correct pour MULTUP/MULTDOWN avec limit_order
                 buy_message = {
-                    "buy": buy,  # 1 = acheter, garde la valeur du signal
-                    "price": float(parameters['amount']),  # Prix à payer (requis par l'API)
+                    "buy": buy,
+                    "price": float(parameters['amount']),
                     "parameters": {
                         "contract_type": parameters['contract_type'],
                         "symbol": parameters['symbol'],
                         "amount": float(parameters['amount']),
                         "basis": "stake",
                         "multiplier": int(parameters['multiplier']),
-                        "currency": "USD",  # Devise du compte (requis par l'API)
+                        "currency": "USD",
                         "limit_order": {
                             "stop_loss": float(parameters['stop_loss']),
                             "take_profit": float(parameters['take_profit'])
@@ -629,96 +711,93 @@ def open_position():
                     }
                 }
                 
-                print(f"Message d'achat avec limit_order: {json.dumps(buy_message, indent=2)}")
-                
-                # Envoyer l'ordre
+                logger.info(f"📤 Sending buy order: {json.dumps(buy_message, indent=2)}")
                 ws.send(json.dumps(buy_message))
                 
-                # Attendre la réponse
                 response = ws.recv()
-                print(f"Réponse de l'ordre: {response}")
-                
                 return response
                 
             except Exception as e:
-                print(f"Erreur WebSocket: {str(e)}")
+                logger.error(f"❌ WebSocket error: {str(e)}")
                 raise e
             finally:
                 if ws:
-                    ws.close()
+                    try:
+                        ws.close()
+                    except:
+                        pass
         
-        # Exécuter l'ordre
         result = send_buy_order()
         result_json = json.loads(result)
         
         return jsonify({
-            'success': True, 
+            'success': True,
             'response': result_json,
-            'sent_data': {
-                'buy': buy,
-                'parameters': parameters
-            }
+            'sent_data': {'buy': buy, 'parameters': parameters}
         })
         
-    except json.JSONDecodeError as e:
-        return jsonify({'success': False, 'error': f'Erreur de décodage JSON: {str(e)}'}), 400
-    except KeyError as e:
-        return jsonify({'success': False, 'error': f'Clé manquante: {str(e)}'}), 400
-    except ValueError as e:
-        return jsonify({'success': False, 'error': f'Erreur de valeur: {str(e)}'}), 400
     except Exception as e:
-        print(f"Erreur générale: {str(e)}")
-        return jsonify({'success': False, 'error': f'Erreur serveur: {str(e)}'}), 500
-
+        logger.error(f"❌ Open position error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/close_position', methods=['POST'])
 def close_position():
-    """
-    Endpoint pour fermer une position ouverte.
-    Requiert un JSON avec les champs 'sell' et 'contract_id'.
-    """
+    """Endpoint pour fermer une position"""
     try:
         data = request.get_json()
         
-        if not data or not isinstance(data, list) or not all('sell' in d and 'contract_id' in d for d in data):
-            return jsonify({'success': False, 'error': 'Format de requête invalide. Attendu: [{"sell":..., "contract_id":...}]'}), 400
-
+        if not data or not isinstance(data, list):
+            return jsonify({'success': False, 'error': 'Format invalide'}), 400
+        
+        if not all('sell' in d and 'contract_id' in d for d in data):
+            return jsonify({'success': False, 'error': 'Champs sell/contract_id manquants'}), 400
+        
         API_TOKEN = "DvXO5nDy5KFG3vW"
         contract_id = data[0]['contract_id']
         sell_price = data[0]['sell']
-
-        # Préparation de la commande WebSocket
+        
         def send_sell_order():
-            ws = websocket.WebSocket()
-            ws.connect("wss://ws.derivws.com/websockets/v3?app_id=1089")
-            ws.send(json.dumps({"authorize": API_TOKEN}))
-            time.sleep(1)  # Laisser le temps à l'auth
-
-            sell_message = {
-                "sell": contract_id,
-                "price": sell_price
-            }
-
-            ws.send(json.dumps(sell_message))
-            time.sleep(2)  # Attente de la confirmation
-            response = ws.recv()
-            ws.close()
-            return response
-
+            ws = None
+            try:
+                ws = websocket.WebSocket()
+                ws.settimeout(30)
+                ws.connect("wss://ws.derivws.com/websockets/v3?app_id=1089")
+                
+                ws.send(json.dumps({"authorize": API_TOKEN}))
+                auth_response = json.loads(ws.recv())
+                
+                if 'error' in auth_response:
+                    raise Exception(f"Auth failed: {auth_response['error'].get('message', 'Unknown')}")
+                
+                sell_message = {"sell": contract_id, "price": sell_price}
+                ws.send(json.dumps(sell_message))
+                
+                response = ws.recv()
+                return response
+                
+            except Exception as e:
+                raise e
+            finally:
+                if ws:
+                    try:
+                        ws.close()
+                    except:
+                        pass
+        
         result = send_sell_order()
         return jsonify({'success': True, 'response': json.loads(result)})
-
+        
     except Exception as e:
+        logger.error(f"❌ Close position error: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':
-    # Port pour Render (utilise la variable d'environnement PORT)
-    import os
     PORT = int(os.environ.get('PORT', 5000))
     
-    print("🚀 API Deriv V10 démarrée")
+    print("🚀 API Deriv V75 - Robust Edition")
     print(f"📍 Port: {PORT}")
+    print("✨ Features: Auto-retry, Thread-safe, Better error handling")
     
     app.run(host='0.0.0.0', port=PORT, debug=False)
