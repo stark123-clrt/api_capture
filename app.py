@@ -143,7 +143,7 @@ class DerivDataCollector:
                     candles_message = {
                         "ticks_history": "R_75",
                         "adjust_start_time": 1,
-                        "count": 50,
+                        "count": 40,
                         "end": "latest",
                         "granularity": 1800,  # 30 minutes
                         "style": "candles"
@@ -178,7 +178,7 @@ class DerivDataCollector:
                             'low': candle.get('low'),
                             'close': candle.get('close')
                         })
-                # Conserver les 50 dernières bougies reçues (ordre API)
+                # Conserver les 40 dernières bougies reçues (ordre API)
                 self.candles = parsed_candles
                 
                 # Calculer les indicateurs
@@ -321,9 +321,9 @@ class DerivDataCollector:
                             }
                             self.transactions.append(cleaned_tx)
                     
-                    # Trier par timestamp décroissant et garder les 15 plus récentes
+                    # Trier par timestamp décroissant et garder les 10 plus récentes
                     self.transactions.sort(key=lambda x: x['timestamp'], reverse=True)
-                    self.result['transactions'] = self.transactions[:15]
+                    self.result['transactions'] = self.transactions[:10]
                     logger.info(f"📋 {len(self.result['transactions'])} transactions finales")
                 else:
                     logger.warning("⚠️ Pas de clé 'transactions' dans le statement")
